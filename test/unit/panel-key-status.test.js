@@ -1,25 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { bootPopup } from '../helpers/popup.js';
+import { bootPanel } from '../helpers/panel.js';
 
 const KEY = 'ARK-TEST-0000-0000';
 const validates = (answer) => (msg) => (msg.type === 'VALIDATE_KEY' ? answer : undefined);
 
 describe('header shows the real license key status (B5)', () => {
   it('no key saved: says so and shows the warning', async () => {
-    const { $ } = await bootPopup();
+    const { $ } = await bootPanel();
     expect($('key-status').textContent).toBe('No Key');
     expect($('no-key-warning').classList.contains('hidden')).toBe(false);
   });
 
   it('a key the server accepts shows how many messages are left', async () => {
-    const { $ } = await bootPopup({ local: { licenseKey: KEY }, onMessage: validates({ valid: true, remaining: 17 }) });
+    const { $ } = await bootPanel({ local: { licenseKey: KEY }, onMessage: validates({ valid: true, remaining: 17 }) });
     expect($('key-status').textContent).toBe('● 17 left today');
     expect($('key-status').className).toContain('active');
     expect($('no-key-warning').classList.contains('hidden')).toBe(true);
   });
 
   it('a key the server rejects is NOT shown as active', async () => {
-    const { $ } = await bootPopup({
+    const { $ } = await bootPanel({
       local: { licenseKey: KEY },
       onMessage: validates({ valid: false, reason: 'Invalid license key.' }),
     });
@@ -30,7 +30,7 @@ describe('header shows the real license key status (B5)', () => {
   });
 
   it('server unreachable: says "Not verified" but does not block the user', async () => {
-    const { $ } = await bootPopup({
+    const { $ } = await bootPanel({
       local: { licenseKey: KEY },
       onMessage: validates({ valid: false, reason: 'Could not reach the server.', code: 'offline' }),
     });
@@ -41,7 +41,7 @@ describe('header shows the real license key status (B5)', () => {
 
   it('does not ask the server again within 10 minutes', async () => {
     const cached = { key: KEY, state: 'valid', remaining: 9, checkedAt: Date.now() - 60_000 };
-    const { $, chrome } = await bootPopup({ local: { licenseKey: KEY, keyStatus: cached } });
+    const { $, chrome } = await bootPanel({ local: { licenseKey: KEY, keyStatus: cached } });
     expect($('key-status').textContent).toBe('● 9 left today');
     const calls = chrome.runtime.sendMessage.mock.calls.filter(([m]) => m.type === 'VALIDATE_KEY');
     expect(calls).toHaveLength(0);
@@ -49,7 +49,7 @@ describe('header shows the real license key status (B5)', () => {
 
   it('flips to "Invalid key" when the server rejects the key during a generate', async () => {
     const cached = { key: KEY, state: 'valid', remaining: 9, checkedAt: Date.now() };
-    const { $ } = await bootPopup({
+    const { $ } = await bootPanel({
       local: { licenseKey: KEY, keyStatus: cached },
       onMessage: (msg) => {
         if (msg.action === 'scrapeProfile') return { success: true, data: { name: 'Aoife', profileUrl: 'https://www.linkedin.com/in/aoife-test/' } };
@@ -66,7 +66,7 @@ describe('header shows the real license key status (B5)', () => {
 
   it('checks again when the cached result is for a different key', async () => {
     const cached = { key: 'ARK-OLD0-0000-0000', state: 'valid', remaining: 9, checkedAt: Date.now() };
-    const { $ } = await bootPopup({
+    const { $ } = await bootPanel({
       local: { licenseKey: KEY, keyStatus: cached },
       onMessage: validates({ valid: false, reason: 'Invalid license key.' }),
     });

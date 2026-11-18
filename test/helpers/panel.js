@@ -1,4 +1,4 @@
-// Boots the real popup (popup.html + utils/cache.js + popup.js) inside happy-dom.
+// Boots the real panel page (sidepanel.html + utils/cache.js + sidepanel.js) inside happy-dom.
 import { vi } from 'vitest';
 import { createFakeChrome } from './fake-chrome.js';
 import { loadPageBody, runInPage } from './load.js';
@@ -11,7 +11,7 @@ export const PROFILE_URL = 'https://www.linkedin.com/in/aoife-test/';
  * @param {string} [opts.tabUrl]   URL of the active tab
  * @param {function} [opts.onMessage]  (msg) => response, answers chrome.runtime.sendMessage
  */
-export async function bootPopup({ local = {}, tabUrl = PROFILE_URL, onMessage = () => undefined } = {}) {
+export async function bootPanel({ local = {}, tabUrl = PROFILE_URL, onMessage = () => undefined } = {}) {
   const { chrome } = createFakeChrome({ local, tabs: [{ id: 7, url: tabUrl }] });
   chrome.runtime.sendMessage.mockImplementation((msg, cb) => {
     const result = Promise.resolve(onMessage(msg));
@@ -23,9 +23,9 @@ export async function bootPopup({ local = {}, tabUrl = PROFILE_URL, onMessage = 
     value: { writeText: vi.fn(async () => {}) }, configurable: true,
   });
 
-  loadPageBody('popup.html');
+  loadPageBody('sidepanel.html');
 
-  // popup.js boots on DOMContentLoaded. Capture that handler instead of
+  // sidepanel.js boots on DOMContentLoaded. Capture that handler instead of
   // registering it, so every test gets exactly one fresh boot.
   let boot;
   const original = document.addEventListener;
@@ -34,7 +34,7 @@ export async function bootPopup({ local = {}, tabUrl = PROFILE_URL, onMessage = 
     return original.call(this, type, fn, opts);
   };
   try {
-    runInPage(['utils/cache.js', 'popup.js']);
+    runInPage(['utils/cache.js', 'sidepanel.js']);
   } finally {
     document.addEventListener = original;
   }

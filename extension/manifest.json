@@ -16,7 +16,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "sidepanel.html",
     "default_title": "LinkedIn Outreach AI"
   },
   "content_scripts": [

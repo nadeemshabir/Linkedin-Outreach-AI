@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bootPopup, settle, type } from '../helpers/popup.js';
+import { bootPanel, settle, type } from '../helpers/panel.js';
 
 const KEY = 'ARK-TEST-0000-0000';
 const VALID = { key: KEY, state: 'valid', remaining: 9, checkedAt: Date.now() };
@@ -15,7 +15,7 @@ async function recent(chrome) {
 describe('Recent stays in sync with what the user actually has (B7)', () => {
   it('Regenerate replaces the saved message (Quick Mode)', async () => {
     let n = 0;
-    const { chrome, $ } = await bootPopup({
+    const { chrome, $ } = await bootPanel({
       local: { licenseKey: KEY, keyStatus: VALID },
       onMessage: (msg) => {
         if (msg.action === 'scrapeProfile') return { success: true, data: person('aoife', 'Aoife') };
@@ -34,7 +34,7 @@ describe('Recent stays in sync with what the user actually has (B7)', () => {
   });
 
   it('edits typed into the message box are saved', async () => {
-    const { chrome, $ } = await bootPopup({
+    const { chrome, $ } = await bootPanel({
       local: { licenseKey: KEY, keyStatus: VALID },
       onMessage: (msg) => {
         if (msg.action === 'scrapeProfile') return { success: true, data: person('aoife', 'Aoife') };
@@ -52,7 +52,7 @@ describe('Recent stays in sync with what the user actually has (B7)', () => {
 
   it('Deep Mode keeps each person separate even if the server omits profileUrl', async () => {
     let current = person('aoife', 'Aoife');
-    const { chrome, $ } = await bootPopup({
+    const { chrome, $ } = await bootPanel({
       local: { licenseKey: KEY, keyStatus: VALID },
       onMessage: (msg) => {
         if (msg.action === 'scrapeProfile') return { success: true, data: current };
