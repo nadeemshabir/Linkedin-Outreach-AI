@@ -8,9 +8,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "bench": "node scripts/bench-scraper.mjs",
-    "dev": "node dev/serve.mjs",
-    "zip": "node scripts/package.mjs"
+    "check:permissions": "node scripts/check-permissions.mjs",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "engines": {
     "node": ">=20"
