@@ -152,7 +152,32 @@ function wireCurrentEvents() {
   document.getElementById('deep-generate-btn').addEventListener('click', handleDeepGenerate);
   document.getElementById('regenerate-btn').addEventListener('click', handleRegenerate);
   document.getElementById('copy-btn').addEventListener('click', handleCopy);
-  document.getElementById('generated-message').addEventListener('input', updateCharCount);
+  document.getElementById('generated-message').addEventListener('input', handleMessageEdited);
+}
+
+function handleMessageEdited() {
+  updateCharCount();
+  const url = currentProfileUrl();
+  if (url) Cache.updateMessage(url, document.getElementById('generated-message').value);
+}
+
+// The URL we scraped ourselves is the reliable ID for a person.
+// (The server's profileJSON may not include profileUrl.)
+function currentProfileUrl() {
+  return (currentProfile && currentProfile.profileUrl) || (deepProfileJSON && deepProfileJSON.profileUrl) || '';
+}
+
+async function saveToRecent(message, profile) {
+  const profileUrl = currentProfileUrl();
+  if (!profileUrl) return;
+  await Cache.addContact({
+    profileUrl,
+    name:      profile.name           || 'Unknown',
+    headline:  profile.headline       || '',
+    company:   profile.currentCompany || '',
+    message,
+    timestamp: Date.now()
+  });
 }
 
 function wireSettingsEvents() {
@@ -210,15 +235,7 @@ async function handleScrapeAndGenerate() {
 
     const message = await callQuickGenerate(profile);
     renderMessage(message);
-
-    await Cache.addContact({
-      profileUrl: profile.profileUrl || '',
-      name:       profile.name       || 'Unknown',
-      headline:   profile.headline   || '',
-      company:    profile.currentCompany || '',
-      message,
-      timestamp:  Date.now()
-    });
+    await saveToRecent(message, profile);
 
     showCurrentStatus('Message ready.', 'success');
   } catch (err) {
@@ -248,6 +265,7 @@ async function handleRegenerate() {
   try {
     const message = await callQuickGenerate(currentProfile);
     renderMessage(message);
+    await saveToRecent(message, currentProfile);
     showCurrentStatus('Regenerated!', 'success');
   } catch (err) {
     showCurrentStatus(err.message, 'error');
@@ -366,14 +384,7 @@ async function handleDeepGenerate() {
       showCurrentStatus(`Message ready.${rem}`, 'success');
       noteRemaining(response.remaining);
 
-      await Cache.addContact({
-        profileUrl: deepProfileJSON.profileUrl || '',
-        name:       deepProfileJSON.name || 'Unknown',
-        headline:   deepProfileJSON.headline || '',
-        company:    deepProfileJSON.currentCompany || '',
-        message:    response.generatedMessage,
-        timestamp:  Date.now()
-      });
+      await saveToRecent(response.generatedMessage, deepProfileJSON);
     }
   );
 }

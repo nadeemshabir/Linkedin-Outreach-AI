@@ -30,5 +30,16 @@ const Cache = (() => {
     });
   }
 
-  return { getContacts, addContact, clearContacts };
+  // Save the user's own edits over the AI draft.
+  async function updateMessage(profileUrl, message) {
+    const contacts = await getContacts();
+    const i = contacts.findIndex(c => c.profileUrl === profileUrl);
+    if (i < 0) return;
+    contacts[i] = { ...contacts[i], message, edited: true };
+    return new Promise((resolve) => {
+      chrome.storage.local.set({ [KEY]: contacts }, resolve);
+    });
+  }
+
+  return { getContacts, addContact, clearContacts, updateMessage };
 })();
