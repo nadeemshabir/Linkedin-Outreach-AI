@@ -42,7 +42,7 @@ if (!globalThis.__arkInpage) {
 
     const clean      = (s) => String(s || '').replace(/\s+/g, ' ').trim();
     const squash     = (s) => String(s || '').replace(/\s+/g, '');
-    const norm       = (s) => clean(String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\s]/gu, ' ')).toLowerCase();
+    const norm       = (s) => clean(String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\s]/gu, ' ')).toLowerCase();
     const firstName  = (name) => clean(name).split(' ')[0] || '';
     const onProfile  = () => /^\/in\/[^/]+/.test(location.pathname);
     const samePerson = (a, b) => {
