@@ -94,6 +94,22 @@ describe('requests time out instead of spinning forever (B9)', () => {
 });
 
 describe('job guard rails', () => {
+  it('"New version" is accepted the instant a run shows done (no lock race)', async () => {
+    const w = world(() => [200, { success: true, message: 'Hi Aoife!' }]);
+    const answers = [];
+    // React exactly when "done" is saved: that is when the panel shows the
+    // message and the user can press "New version".
+    w.chrome.storage.onChanged.addListener((changes, area) => {
+      const job = changes['job:/in/aoife/'] && changes['job:/in/aoife/'].newValue;
+      if (area === 'session' && job && job.step === 'done' && answers.length === 0) {
+        answers.push(w.start({ ...QUICK, regenerate: true }));
+      }
+    });
+    await w.start(QUICK);
+    await until(() => answers.length === 1);
+    expect(await answers[0]).toMatchObject({ ok: true });
+  });
+
   it('refuses to start without a license key', async () => {
     const w = createWorld({ tabs: [{ id: 1, url: AOIFE.profileUrl, active: true }], pages: { 1: AOIFE } });
     expect(await w.start(QUICK)).toMatchObject({ ok: false, code: 'no_key' });

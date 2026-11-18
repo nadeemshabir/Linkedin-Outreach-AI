@@ -35,6 +35,20 @@ export function runInPage(files) {
   (0, eval)(code);
 }
 
+/**
+ * Run scripts and return one top-level name they define, e.g.
+ *   const Limits = exportFrom('utils/limits.js', 'Limits')
+ */
+export function exportFrom(files, name) {
+  const code = [].concat(files).map(read).join('\n;\n') + `\n;${name};`;
+  return (0, eval)(code);
+}
+
+/** The local <script src> files an extension page loads, in order. */
+export function pageScripts(htmlFile) {
+  return [...read(htmlFile).matchAll(/<script[^>]*\bsrc="([^"]+)"/gi)].map((m) => m[1]);
+}
+
 /** Load an extension HTML page's <body> markup into the happy-dom document. */
 export function loadPageBody(htmlFile) {
   const html = read(htmlFile);

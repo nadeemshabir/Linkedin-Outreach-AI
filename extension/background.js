@@ -53,7 +53,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ─── Jobs ─────────────────────────────────────────────────────────────────────
-async function startJob({ tabId, mode, messageType, tone, regenerate = false }) {
+async function startJob({ tabId, mode, channel, maxChars, messageType, tone, regenerate = false }) {
   await ready;
   const tab        = await getTab(tabId);
   const profileKey = tab && ProfileUrl.key(tab.url);
@@ -70,6 +70,8 @@ async function startJob({ tabId, mode, messageType, tone, regenerate = false }) 
     profileUrl:     ProfileUrl.canonical(profileKey),
     tabId,
     mode:           mode === 'deep' ? 'deep' : 'quick',
+    channel:        channel === 'note' ? 'note' : 'message',
+    maxChars:       Number(maxChars) > 0 ? Number(maxChars) : null,
     messageType,
     tone,
     step:           'reading',
@@ -86,8 +88,31 @@ async function startJob({ tabId, mode, messageType, tone, regenerate = false }) 
 
   running.add(profileKey);
   await saveJob(job);
-  runJob(job, licenseKey).finally(() => running.delete(profileKey));
+  runJob(job, licenseKey).catch(() => {}); // runJob records its own errors on the job
   return { ok: true, profileKey };
+}
+
+// ─── Telling the writer where the message goes ───────────────────────────────
+// Ark's server has no field yet for "this is a 200-character connection
+// note". Until it does (see docs/API-PROPOSAL.md), we pass that only inside
+// fields the server already reads, and never add new top-level fields that a
+// strict request check could reject:
+//   - Quick Mode: one clearly marked line at the end of the bio, plus
+//     profileData.outreachContext
+//   - Deep Mode:  enrichmentJSON.outreachContext (the server's own object,
+//     which the extension already sends back)
+// The panel's length meter and "Fit" button are the safety net either way.
+function outreachContext(job) {
+  return { channel: job.channel, maxChars: job.maxChars, format: formatHint(job) };
+}
+
+function formatHint(job) {
+  if (!job.maxChars) return '';
+  // Models overshoot character counts, so ask for ~15% under the real limit.
+  const target = Math.floor(job.maxChars * 0.85);
+  return job.channel === 'note'
+    ? `[Message format: LinkedIn connection note. Keep it under ${target} characters (hard limit ${job.maxChars}, including spaces). No sign-off.]`
+    : `[Message format: LinkedIn message to a connection. Keep it under ${job.maxChars} characters.]`;
 }
 
 function firstStep(job) {
@@ -101,6 +126,16 @@ async function runJob(job, licenseKey) {
   // (here: saving the job) resets that timer, and the heartbeat also tells
   // the panel the run is still alive.
   const heartbeat = setInterval(() => { job.heartbeatAt = Date.now(); saveJob(job); }, HEARTBEAT_MS);
+
+  // Ending a run: stop the heartbeat and free this profile for the next run
+  // BEFORE saving the final state. The moment the panel sees "done" or
+  // "error", the user can press "New version", and that must not be refused.
+  const end = async () => {
+    clearInterval(heartbeat);
+    running.delete(job.profileKey);
+    await saveJob(job);
+  };
+
   try {
     if (!job.profile) {
       await setStep(job, 'reading');
@@ -122,7 +157,7 @@ async function runJob(job, licenseKey) {
       result = await callServer('/api/generate/deep', {
         key:            licenseKey,
         profileJSON:    job.profileJSON,
-        enrichmentJSON: job.enrichmentJSON,
+        enrichmentJSON: { ...job.enrichmentJSON, outreachContext: outreachContext(job) },
         messageType:    job.messageType,
         tone:           job.tone,
         resumeBase64:   settings.resumeBase64 || null
@@ -131,32 +166,31 @@ async function runJob(job, licenseKey) {
       await setStep(job, 'writing');
       result = await callServer('/api/generate/quick', {
         key:          licenseKey,
-        profileData:  job.profile,
+        profileData:  { ...job.profile, outreachContext: outreachContext(job) },
         messageType:  job.messageType,
         tone:         job.tone,
         userName:     settings.userName,
-        userBio:      settings.userBio,
+        userBio:      [settings.userBio, formatHint(job)].filter(Boolean).join('\n\n'),
         resumeBase64: settings.resumeBase64 || null
       }, TIMEOUT_MS.quick);
     }
 
     if (!result.success) throw new Error(result.error || 'Generation failed.');
-    job.message    = result.message;
-    job.messageId  = Date.now();
-    job.remaining  = result.remaining;
+    job.message   = result.message;
+    job.messageId = Date.now();
+    job.remaining = result.remaining;
+    // Bookkeeping first, so "done" really means done.
+    await saveToRecent(job).catch(() => {});
+    await noteRemaining(result.remaining).catch(() => {});
     job.step       = 'done';
     job.finishedAt = Date.now();
-    await saveJob(job);
-    await saveToRecent(job);
-    await noteRemaining(result.remaining);
+    await end();
   } catch (err) {
     job.failedStep = job.step;
     job.step       = 'error';
     job.error      = { message: err.message, code: err.code || null };
-    await saveJob(job);
-    if (err.code === 'http_401' || err.code === 'http_403') await noteKeyRejected(err.message);
-  } finally {
-    clearInterval(heartbeat);
+    if (err.code === 'http_401' || err.code === 'http_403') await noteKeyRejected(err.message).catch(() => {});
+    await end();
   }
 }
 

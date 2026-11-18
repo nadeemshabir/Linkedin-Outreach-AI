@@ -22,13 +22,17 @@ let job            = null;   // the background's job for this profile
 let peek           = null;   // quick look at the profile (name, headline)
 let shownMessageId = null;   // which generated message the textarea shows
 let currentMode    = 'simple';
+let currentChannel = 'note'; // where the message will be sent: 'note' | 'message'
+let linkedinPlan   = 'free'; // decides the note limit: 200 (free) or 300 (premium)
 let peekTimer      = null;
+let fitUndo        = null;   // { text, summary, ok } after "Fit to 200", until the next edit
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   document.documentElement.classList.add(IS_POPUP ? 'is-popup' : 'is-panel');
   initTabs();
   initModeToggle();
+  initChannelToggle();
   wireSettingsEvents();
   wireCurrentEvents();
   wireRecentEvents();
@@ -133,6 +137,58 @@ function setMode(mode) {
   renderJob();
 }
 
+// ─── Where the message goes: connection note or message ──────────────────────
+// A note is hard-capped by LinkedIn (200 free / 300 Premium), and free plans
+// get only a few notes a month. A message to a connection has no tight cap.
+function initChannelToggle() {
+  document.querySelectorAll('[data-channel]').forEach(btn => {
+    btn.addEventListener('click', () => { setChannel(btn.dataset.channel); saveChoices(); });
+  });
+}
+
+function setChannel(channel) {
+  currentChannel = channel === 'message' ? 'message' : 'note';
+  document.querySelectorAll('[data-channel]').forEach(btn => {
+    const on = btn.dataset.channel === currentChannel;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-checked', String(on));
+  });
+  renderChannelHint();
+  updateCharCount();
+}
+
+async function renderChannelHint() {
+  const el = document.getElementById('channel-hint');
+  if (currentChannel === 'message') {
+    el.textContent = 'For people you are already connected with. Short messages get more replies.';
+    return;
+  }
+  if (linkedinPlan === 'premium') {
+    el.textContent = 'Up to 300 characters on Premium.';
+    return;
+  }
+  const used  = await notesUsedThisMonth();
+  const total = Limits.FREE_NOTES_PER_MONTH;
+  el.textContent = used < total - 1
+    ? `Up to 200 characters. Free plans get only a few notes a month (made here: ${used} of ~${total}).`
+    : `Notes made here this month: ${used} of ~${total}. Running out? Connect without a note, then send a Message once they accept.`;
+}
+
+async function notesUsedThisMonth() {
+  const { noteUsage } = await storageGet(['noteUsage']);
+  return noteUsage && noteUsage.month === Limits.monthKey() ? noteUsage.profiles.length : 0;
+}
+
+// Counted when you copy (or insert) a note, once per person per month.
+async function recordNoteUsed() {
+  if (currentChannel !== 'note' || !profileKey) return;
+  const month = Limits.monthKey();
+  const { noteUsage } = await storageGet(['noteUsage']);
+  const profiles = noteUsage && noteUsage.month === month ? noteUsage.profiles : [];
+  if (!profiles.includes(profileKey)) await storageSet({ noteUsage: { month, profiles: [...profiles, profileKey] } });
+  renderChannelHint();
+}
+
 // ─── Follow the browser ───────────────────────────────────────────────────────
 // The panel stays open while you browse, so it follows the active tab and
 // LinkedIn's in-page navigation, and redraws when the background saves progress.
@@ -166,7 +222,10 @@ async function refreshActiveTab() {
     shownMessageId = null;
     job            = key ? await loadJob(key) : null;
     if (key !== profileKey) return; // the user moved on while we were loading
-    if (job) setMode(job.mode === 'deep' ? 'deep' : 'simple');
+    if (job) {
+      if (job.channel) setChannel(job.channel);
+      setMode(job.mode === 'deep' ? 'deep' : 'simple');
+    }
   }
   renderJob();
   if (key && !(job && job.profile)) peekActiveProfile(key);
@@ -194,7 +253,12 @@ function wireCurrentEvents() {
   document.getElementById('generate-btn').addEventListener('click', () => handleGenerate());
   document.getElementById('regenerate-btn').addEventListener('click', () => handleGenerate({ regenerate: true }));
   document.getElementById('copy-btn').addEventListener('click', handleCopy);
-  document.getElementById('generated-message').addEventListener('input', handleMessageEdited);
+  document.getElementById('fit-btn').addEventListener('click', handleFit);
+  document.getElementById('undo-fit-btn').addEventListener('click', handleUndoFit);
+  document.getElementById('generated-message').addEventListener('input', () => {
+    fitUndo = null; // a real edit ends the "just shortened" state
+    handleMessageEdited();
+  });
   document.getElementById('message-type').addEventListener('change', saveChoices);
   document.getElementById('tone').addEventListener('change', saveChoices);
 }
@@ -215,6 +279,8 @@ async function handleGenerate({ regenerate = false } = {}) {
     payload: {
       tabId:       activeTabId,
       mode:        currentMode === 'deep' ? 'deep' : 'quick',
+      channel:     currentChannel,
+      maxChars:    Limits.limitFor(currentChannel, linkedinPlan),
       messageType: document.getElementById('message-type').value,
       tone:        document.getElementById('tone').value,
       regenerate
@@ -238,16 +304,67 @@ function handleMessageEdited() {
   Cache.updateMessage(job.profileUrl, text);
 }
 
+// ─── Make it fit ──────────────────────────────────────────────────────────────
+function handleFit() {
+  const ta     = document.getElementById('generated-message');
+  const limit  = Limits.limitFor(currentChannel, linkedinPlan);
+  const before = ta.value;
+  const r      = Limits.fitToLimit(before, limit);
+  if (!r.changed) return;
+  const n = r.removed.length;
+  fitUndo = {
+    text: before,
+    ok: r.fits,
+    summary: r.fits
+      ? `Shortened from ${before.length} to ${r.text.length} by removing ${n} sentence${n === 1 ? '' : 's'}. Please read it once.`
+      : `Still ${r.text.length - limit} over after removing ${n} sentence${n === 1 ? '' : 's'}. Edit it, or try New version.`
+  };
+  ta.value = r.text;
+  handleMessageEdited();
+}
+
+function handleUndoFit() {
+  if (!fitUndo) return;
+  document.getElementById('generated-message').value = fitUndo.text;
+  fitUndo = null;
+  handleMessageEdited();
+}
+
+function renderFitRow(st) {
+  const row  = document.getElementById('fit-row');
+  const btn  = document.getElementById('fit-btn');
+  const undo = document.getElementById('undo-fit-btn');
+  const text = document.getElementById('fit-text');
+  if (fitUndo) {
+    row.className    = `fit-row${fitUndo.ok ? ' ok' : ''}`;
+    text.textContent = fitUndo.summary;
+    btn.classList.add('hidden');
+    undo.classList.remove('hidden');
+    return;
+  }
+  const show = st.hard && st.over;
+  row.className = `fit-row${show ? '' : ' hidden'}`;
+  if (!show) return;
+  text.textContent = `${st.count - st.limit} characters over the ${st.limit} limit for a note.`;
+  btn.textContent  = `Fit to ${st.limit}`;
+  btn.classList.remove('hidden');
+  undo.classList.add('hidden');
+}
+
 async function restoreChoices() {
-  const { lastMessageType, lastTone } = await storageGet(['lastMessageType', 'lastTone']);
+  const { lastMessageType, lastTone, lastChannel, linkedinPlan: plan } =
+    await storageGet(['lastMessageType', 'lastTone', 'lastChannel', 'linkedinPlan']);
   if (lastMessageType) document.getElementById('message-type').value = lastMessageType;
   if (lastTone)        document.getElementById('tone').value = lastTone;
+  linkedinPlan = plan === 'premium' ? 'premium' : 'free';
+  setChannel(lastChannel || 'note');
 }
 
 function saveChoices() {
   storageSet({
     lastMessageType: document.getElementById('message-type').value,
-    lastTone:        document.getElementById('tone').value
+    lastTone:        document.getElementById('tone').value,
+    lastChannel:     currentChannel
   });
 }
 
@@ -271,6 +388,7 @@ function renderJob() {
   if (job && job.message) {
     if (shownMessageId !== job.messageId) {
       shownMessageId = job.messageId;
+      fitUndo = null;
       renderMessage(job.editedMessage != null ? job.editedMessage : job.message);
     }
   } else {
@@ -293,9 +411,11 @@ function doneText(j) {
   return `Message ready.${left}`;
 }
 
+// Steps show progress while running, and where it failed. Once a run
+// succeeds they get out of the way, so the message sits higher up.
 function renderSteps(stale) {
   const mode = currentMode === 'deep' ? 'deep' : 'quick';
-  const show = !!job && job.mode === mode;
+  const show = !!job && job.mode === mode && job.step !== 'done';
   document.getElementById('steps').classList.toggle('hidden', !show);
   document.getElementById('step-enriching').classList.toggle('hidden', mode !== 'deep');
   document.querySelector('#step-writing .layer-badge').textContent = mode === 'deep' ? '3' : '2';
@@ -352,6 +472,13 @@ function wireSettingsEvents() {
   document.getElementById('license-key').addEventListener('keydown', e => {
     if (e.key === 'Enter') handleValidateKey();
   });
+  // The plan changes the note limit, so it applies at once (no Save needed).
+  document.getElementById('linkedin-plan').addEventListener('change', async (e) => {
+    linkedinPlan = e.target.value === 'premium' ? 'premium' : 'free';
+    await storageSet({ linkedinPlan });
+    renderChannelHint();
+    updateCharCount();
+  });
 
   // Resume upload
   const dropArea = document.getElementById('file-upload-area');
@@ -372,6 +499,7 @@ function wireSettingsEvents() {
 
 async function loadSettings() {
   const s = await loadStoredSettings();
+  document.getElementById('linkedin-plan').value = linkedinPlan;
   if (s.licenseKey) document.getElementById('license-key').value = s.licenseKey;
   if (s.userName)   document.getElementById('user-name').value   = s.userName;
   if (s.userBio)    document.getElementById('user-bio').value    = s.userBio;
@@ -454,8 +582,15 @@ function renderMessage(text) {
 }
 
 function hideMessage() { document.getElementById('message-section').classList.add('hidden'); }
+
+// The length meter: "183 / 200" for a note, a soft target for a message.
 function updateCharCount() {
-  document.getElementById('char-count').textContent = `${document.getElementById('generated-message').value.length} chars`;
+  const text  = document.getElementById('generated-message').value;
+  const st    = Limits.lengthState(text, currentChannel, linkedinPlan);
+  const meter = document.getElementById('char-count');
+  meter.textContent = st.hard ? `${st.count} / ${st.limit}` : `${st.count} chars · aim for under ${st.limit}`;
+  meter.className   = `char-count${st.over ? ' over' : st.near ? ' near' : ''}`;
+  renderFitRow(st);
 }
 
 async function handleCopy() {
@@ -465,6 +600,7 @@ async function handleCopy() {
     const ta = document.getElementById('generated-message');
     ta.select(); document.execCommand('copy');
   }
+  recordNoteUsed();
   const btn = document.getElementById('copy-btn');
   btn.textContent = '✓ Copied!';
   btn.classList.add('btn-secondary'); btn.classList.remove('btn-primary');

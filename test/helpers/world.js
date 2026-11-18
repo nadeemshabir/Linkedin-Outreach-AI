@@ -2,8 +2,9 @@
 // to each other through a fake chrome.* API, the way they do in Chrome.
 // LinkedIn pages and Ark's server are fakes that each test controls.
 import { vi } from 'vitest';
+import { Window } from 'happy-dom';
 import { createFakeChrome } from './fake-chrome.js';
-import { runIsolated, loadPageBody, runInPage } from './load.js';
+import { runIsolated, read, pageScripts } from './load.js';
 
 export const SERVER  = 'https://linkedin-extention-production.up.railway.app';
 export const KEY     = 'ARK-TEST-0000-0000';
@@ -106,44 +107,60 @@ export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, s
 
 /**
  * Open the real side panel page (sidepanel.html + its scripts) in this world.
- * close() shuts it the way the user would: its listeners and timers go away.
+ * Each panel gets its own document and its own timers, like a real page, so
+ * panels from earlier tests can never draw into this one. close() stops all
+ * of this panel's listeners and timers, the way closing the panel would.
  */
-export async function openPanel(world) {
-  globalThis.chrome = world.chrome;
-  Object.defineProperty(globalThis.navigator, 'clipboard', {
-    value: { writeText: vi.fn(async () => {}) }, configurable: true,
-  });
-  loadPageBody('sidepanel.html');
+export async function openPanel(world, { url = 'chrome-extension://test-extension-id/sidepanel.html' } = {}) {
+  const win = new Window({ url });
+  const doc = win.document;
+  const html = read('sidepanel.html');
+  doc.body.innerHTML = html.match(/<body[^>]*>([\s\S]*)<\/body>/i)[1].replace(/<script[\s\S]*?<\/script>/gi, '');
+
+  const timers = new Set();
+  const own = {
+    setTimeout: (fn, ms, ...args) => {
+      const id = setTimeout(() => { timers.delete(id); fn(...args); }, ms);
+      timers.add(id);
+      return id;
+    },
+    clearTimeout: (id) => { timers.delete(id); clearTimeout(id); },
+    setInterval: (fn, ms, ...args) => { const id = setInterval(fn, ms, ...args); timers.add(id); return id; },
+    clearInterval: (id) => { timers.delete(id); clearInterval(id); },
+  };
+  const navigator = { clipboard: { writeText: vi.fn(async () => {}) } };
 
   const events = [world.chrome.storage.onChanged, world.chrome.tabs.onActivated, world.chrome.tabs.onUpdated];
   const before = events.map((e) => e.fns.length);
-  const intervals = [];
-  const realSetInterval = globalThis.setInterval;
-  globalThis.setInterval = (...args) => { const id = realSetInterval(...args); intervals.push(id); return id; };
 
-  // sidepanel.js boots on DOMContentLoaded. Capture that handler instead of
-  // registering it, so each panel boots exactly once.
+  // The page's scripts boot on DOMContentLoaded: capture that handler.
   let boot;
-  const original = document.addEventListener;
-  document.addEventListener = function (type, fn, opts) {
-    if (type === 'DOMContentLoaded') { boot = fn; return undefined; }
-    return original.call(this, type, fn, opts);
-  };
-  try {
-    runInPage(['utils/profile-url.js', 'utils/cache.js', 'sidepanel.js']);
-    await boot();
-  } finally {
-    document.addEventListener = original;
-    globalThis.setInterval = realSetInterval;
-  }
+  const realAdd = doc.addEventListener.bind(doc);
+  doc.addEventListener = (type, fn, opts) => (type === 'DOMContentLoaded' ? (boot = fn) : realAdd(type, fn, opts));
+  const code = pageScripts('sidepanel.html').map(read).join('\n;\n');
+  // eslint-disable-next-line no-new-func
+  new Function(
+    'document', 'window', 'location', 'navigator', 'chrome',
+    'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'FileReader',
+    code,
+  )(doc, win, win.location, navigator, world.chrome,
+    own.setTimeout, own.clearTimeout, own.setInterval, own.clearInterval, win.FileReader);
+  doc.addEventListener = realAdd;
+
+  const added = [];
+  await boot();
+  events.forEach((e, i) => added.push(e.fns.slice(before[i])));
   await settle();
 
   return {
-    $: (id) => document.getElementById(id),
+    window: win,
+    document: doc,
+    navigator,
+    $: (id) => doc.getElementById(id),
     close() {
-      events.forEach((e, i) => e.fns.splice(before[i]));
-      intervals.forEach((id) => clearInterval(id));
-      document.body.innerHTML = '';
+      events.forEach((e, i) => added[i].forEach((fn) => e.removeListener(fn)));
+      timers.forEach((id) => { clearTimeout(id); clearInterval(id); });
+      timers.clear();
     },
   };
 }
@@ -164,9 +181,15 @@ export async function until(check, { timeout = 3000, interval = 5 } = {}) {
   }
 }
 
+/** Fire a DOM event using the element's own window (each panel has one). */
+export function fire(el, type) {
+  const W = el.ownerDocument.defaultView;
+  el.dispatchEvent(new W.Event(type, { bubbles: true }));
+}
+
 export function type(el, text) {
   el.value = text;
-  el.dispatchEvent(new Event('input', { bubbles: true }));
+  fire(el, 'input');
 }
 
 export function deferred() {

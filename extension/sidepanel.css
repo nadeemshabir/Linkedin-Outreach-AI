@@ -235,6 +235,27 @@ html.is-popup body {
 
 #generate-btn { margin-bottom: 10px; }
 
+.channel-group { margin-bottom: 10px; }
+.channel-group .mode-toggle { margin-bottom: 6px; }
+.channel-group .mode-hint { margin: 0; }
+
+/* Length meter: "183 / 200" turns amber near the limit and red over it. */
+.char-count.near { color: var(--warning); font-weight: 600; }
+.char-count.over { color: var(--error);   font-weight: 600; }
+
+.fit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  color: var(--error);
+  background: var(--error-bg);
+  border-top: 1px solid var(--border);
+}
+.fit-row.ok { color: var(--text-2); background: var(--surface-2); }
+
 .close-hint {
   font-size: 11px;
   color: var(--text-2);

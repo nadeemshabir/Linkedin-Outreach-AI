@@ -1,7 +1,7 @@
 // The side panel + background "job" design (Phase 2), tested with the REAL
 // panel and REAL background code talking through a fake browser.
 import { describe, it, expect } from 'vitest';
-import { createWorld, openPanel, person, until, settle, type, deferred, KEY } from '../helpers/world.js';
+import { createWorld, openPanel, person, until, settle, type, fire, deferred, KEY } from '../helpers/world.js';
 
 const VALID = () => ({ key: KEY, state: 'valid', remaining: 9, checkedAt: Date.now() });
 const AOIFE = person('aoife', 'Aoife');
@@ -71,18 +71,30 @@ describe('side panel + background jobs', () => {
   });
 
   it('Deep Mode runs every step from one click (B4)', async () => {
-    const w = world();
+    const gate = deferred();
+    const w = world({
+      server: async (path, body) => {
+        if (path === '/api/generate/deep') await gate.promise;
+        return okServer(path, body);
+      },
+    });
     const panel = await openPanel(w);
     panel.$('mode-deep').click();
     panel.$('generate-btn').click();
 
+    // Mid-run: live progress, and the talking points show before writing ends.
+    await until(() => dotOf(panel, 'writing').includes('running'));
+    expect(dotOf(panel, 'reading')).toContain('done');
+    expect(dotOf(panel, 'enriching')).toContain('done');
+    expect(panel.$('hooks-list').textContent).toContain('Spotify opened a Dublin office');
+
+    gate.resolve();
     await until(() => panel.$('generated-message').value === 'Deep hello, Aoife');
     await settle();
     expect(w.calls.map((c) => c.path)).toEqual(['/api/generate/enrich', '/api/generate/deep']);
-    expect(panel.$('hooks-list').textContent).toContain('Spotify opened a Dublin office');
     expect(panel.$('status-message').textContent).toBe('Message ready. 8 left today.');
     expect(panel.$('key-status').textContent).toBe('● 8 left today');
-    for (const step of ['reading', 'enriching', 'writing']) expect(dotOf(panel, step)).toContain('done');
+    expect(panel.$('steps').classList.contains('hidden')).toBe(true); // out of the way once done
   });
 
   it('"New version" only rewrites: no second page read, no second enrichment', async () => {
@@ -154,9 +166,9 @@ describe('side panel + background jobs', () => {
     const w = world();
     let panel = await openPanel(w);
     panel.$('message-type').value = 'Referral';
-    panel.$('message-type').dispatchEvent(new Event('change'));
+    fire(panel.$('message-type'), 'change');
     panel.$('tone').value = 'Casual';
-    panel.$('tone').dispatchEvent(new Event('change'));
+    fire(panel.$('tone'), 'change');
     await settle();
     panel.close();
 
