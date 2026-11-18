@@ -9,6 +9,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "check:permissions": "node scripts/check-permissions.mjs",
+    "bench": "node scripts/bench-scraper.mjs",
     "screenshots": "node scripts/screenshots.mjs"
   },
   "engines": {

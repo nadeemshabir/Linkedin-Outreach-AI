@@ -19,7 +19,8 @@ async function scrape(html) {
   document.body.innerHTML = html;
   const { chrome, dispatchMessage } = createFakeChrome();
   globalThis.chrome = chrome;
-  runInPage('content_script.js');
+  delete globalThis.__outreachContentScript; // listen again on this test's fake chrome
+  runInPage(['scraper.js', 'content_script.js']);
   vi.useFakeTimers();
   const pending = dispatchMessage({ action: 'scrapeProfile' });
   await vi.advanceTimersByTimeAsync(5000);
