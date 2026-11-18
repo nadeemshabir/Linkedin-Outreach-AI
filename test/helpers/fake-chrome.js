@@ -66,6 +66,8 @@ export function createFakeChrome({ local = {}, session = {}, tabs = [] } = {}) {
       onInstalled: makeEvent(),
       onStartup: makeEvent(),
       getURL: (p) => `chrome-extension://test-extension-id/${p}`,
+      getManifest: () => ({ content_scripts: [{ js: ['content_script.js'] }] }),
+      getPlatformInfo: vi.fn(async () => ({ os: 'linux' })),
       // Replace in a test to fake answers from another extension context.
       sendMessage: vi.fn(),
     },
@@ -76,6 +78,11 @@ export function createFakeChrome({ local = {}, session = {}, tabs = [] } = {}) {
     },
     tabs: {
       query: vi.fn(async () => tabs),
+      get: vi.fn(async (id) => {
+        const tab = tabs.find((t) => t.id === id);
+        if (!tab) throw new Error(`No tab with id: ${id}.`);
+        return { ...tab };
+      }),
       sendMessage: vi.fn(),
       onUpdated: makeEvent(),
       onActivated: makeEvent(),

@@ -1,77 +1,75 @@
+// Recent keeps the message the user actually has (B7).
 import { describe, it, expect } from 'vitest';
-import { bootPanel, settle, type } from '../helpers/panel.js';
+import { createWorld, openPanel, person, until, settle, type, KEY } from '../helpers/world.js';
 
-const KEY = 'ARK-TEST-0000-0000';
-const VALID = { key: KEY, state: 'valid', remaining: 9, checkedAt: Date.now() };
-
-function person(slug, name) {
-  return { name, headline: `${name} headline`, currentCompany: 'Spotify', profileUrl: `https://www.linkedin.com/in/${slug}/` };
-}
-
-async function recent(chrome) {
-  return (await chrome.storage.local.get(['recentContacts'])).recentContacts || [];
-}
+const VALID = () => ({ key: KEY, state: 'valid', remaining: 9, checkedAt: Date.now() });
 
 describe('Recent stays in sync with what the user actually has (B7)', () => {
-  it('Regenerate replaces the saved message (Quick Mode)', async () => {
+  it('"New version" replaces the saved message (Quick Mode)', async () => {
     let n = 0;
-    const { chrome, $ } = await bootPanel({
-      local: { licenseKey: KEY, keyStatus: VALID },
-      onMessage: (msg) => {
-        if (msg.action === 'scrapeProfile') return { success: true, data: person('aoife', 'Aoife') };
-        if (msg.action === 'generateMessage') return { success: true, generatedMessage: `draft ${++n}` };
-        return undefined;
-      },
+    const aoife = person('aoife', 'Aoife');
+    const w = createWorld({
+      local: { licenseKey: KEY, keyStatus: VALID() },
+      tabs: [{ id: 1, url: aoife.profileUrl, active: true }],
+      pages: { 1: aoife },
+      server: () => [200, { success: true, message: `draft ${++n}` }],
     });
-    $('scrape-btn').click(); await settle(10);
-    expect((await recent(chrome))[0].message).toBe('draft 1');
+    const panel = await openPanel(w);
+    panel.$('generate-btn').click();
+    await until(() => panel.$('generated-message').value === 'draft 1');
+    expect((await w.recent())[0].message).toBe('draft 1');
 
-    $('regenerate-btn').click(); await settle(10);
-    expect($('generated-message').value).toBe('draft 2');
-    const saved = await recent(chrome);
+    panel.$('regenerate-btn').click();
+    await until(() => panel.$('generated-message').value === 'draft 2');
+    await settle();
+    const saved = await w.recent();
     expect(saved).toHaveLength(1);
     expect(saved[0].message).toBe('draft 2');
   });
 
   it('edits typed into the message box are saved', async () => {
-    const { chrome, $ } = await bootPanel({
-      local: { licenseKey: KEY, keyStatus: VALID },
-      onMessage: (msg) => {
-        if (msg.action === 'scrapeProfile') return { success: true, data: person('aoife', 'Aoife') };
-        if (msg.action === 'generateMessage') return { success: true, generatedMessage: 'AI draft' };
-        return undefined;
-      },
+    const aoife = person('aoife', 'Aoife');
+    const w = createWorld({
+      local: { licenseKey: KEY, keyStatus: VALID() },
+      tabs: [{ id: 1, url: aoife.profileUrl, active: true }],
+      pages: { 1: aoife },
+      server: () => [200, { success: true, message: 'AI draft' }],
     });
-    $('scrape-btn').click(); await settle(10);
-    type($('generated-message'), 'AI draft, edited by me');
-    await settle(10);
-    const [saved] = await recent(chrome);
-    expect(saved.message).toBe('AI draft, edited by me');
-    expect(saved.edited).toBe(true);
+    const panel = await openPanel(w);
+    panel.$('generate-btn').click();
+    await until(() => panel.$('generated-message').value === 'AI draft');
+    type(panel.$('generated-message'), 'AI draft, edited by me');
+    await settle();
+    expect((await w.recent())[0]).toMatchObject({ message: 'AI draft, edited by me', edited: true });
   });
 
   it('Deep Mode keeps each person separate even if the server omits profileUrl', async () => {
-    let current = person('aoife', 'Aoife');
-    const { chrome, $ } = await bootPanel({
-      local: { licenseKey: KEY, keyStatus: VALID },
-      onMessage: (msg) => {
-        if (msg.action === 'scrapeProfile') return { success: true, data: current };
+    const aoife = person('aoife', 'Aoife');
+    const liam  = person('liam', 'Liam');
+    const w = createWorld({
+      local: { licenseKey: KEY, keyStatus: VALID() },
+      tabs: [{ id: 1, url: aoife.profileUrl, active: true }],
+      pages: { 1: aoife },
+      server: (path, body) => {
         // The server's structured profile has no profileUrl field.
-        if (msg.type === 'RUN_ENRICH') return { status: 'enrich_complete', profileJSON: { name: current.name }, enrichmentJSON: { topHooks: [] } };
-        if (msg.type === 'RUN_GENERATE') return { status: 'generate_complete', generatedMessage: `Hi ${current.name}`, remaining: 8 };
-        return undefined;
+        if (path === '/api/generate/enrich') {
+          return [200, { success: true, profileJSON: { name: body.rawProfileData.name }, enrichmentJSON: { topHooks: [] } }];
+        }
+        return [200, { success: true, message: `Hi ${body.profileJSON.name}`, remaining: 8 }];
       },
     });
-    $('mode-deep').click();
+    const panel = await openPanel(w);
+    panel.$('mode-deep').click();
+    panel.$('generate-btn').click();
+    await until(() => panel.$('generated-message').value === 'Hi Aoife');
 
-    $('enrich-btn').click(); await settle(10);
-    $('deep-generate-btn').click(); await settle(10);
+    w.navigate(1, liam.profileUrl, liam);
+    await until(() => panel.$('profile-name').textContent === 'Liam');
+    panel.$('generate-btn').click();
+    await until(() => panel.$('generated-message').value === 'Hi Liam');
+    await settle();
 
-    current = person('liam', 'Liam');
-    $('enrich-btn').click(); await settle(10);
-    $('deep-generate-btn').click(); await settle(10);
-
-    const saved = await recent(chrome);
+    const saved = await w.recent();
     expect(saved.map((c) => c.name)).toEqual(['Liam', 'Aoife']);
     expect(saved.map((c) => c.profileUrl)).toEqual([
       'https://www.linkedin.com/in/liam/',

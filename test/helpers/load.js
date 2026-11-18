@@ -14,7 +14,11 @@ export const read = (rel) => fs.readFileSync(path.join(EXT, rel), 'utf8');
  * Several files share one global scope, the way classic scripts do.
  */
 export function runIsolated(files, globals) {
-  const context = vm.createContext({ console, ...globals });
+  const context = vm.createContext({ console, URL, ...globals });
+  // Service workers load helper files with importScripts().
+  context.importScripts = (...paths) => {
+    for (const p of paths) vm.runInContext(read(p), context, { filename: p });
+  };
   for (const f of [].concat(files)) {
     vm.runInContext(read(f), context, { filename: f });
   }

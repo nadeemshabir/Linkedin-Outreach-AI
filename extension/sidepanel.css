@@ -33,12 +33,20 @@ body {
   font-size: 13px;
   background: var(--bg);
   color: var(--text);
-  width: 400px;
-  min-height: 480px;
-  max-height: 600px; /* Chrome's hard limit for popups */
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* Side panel: fill the panel, whatever width the user drags it to. */
+html.is-panel, html.is-panel body { height: 100%; }
+html.is-panel body { width: 100%; min-width: 300px; }
+
+/* Popup fallback (browsers without the Side Panel API): fixed size. */
+html.is-popup body {
+  width: 400px;
+  min-height: 480px;
+  max-height: 600px; /* Chrome's hard limit for popups */
 }
 
 /* ── App shell ─────────────────────────────────────────────────────────────── */
@@ -218,6 +226,30 @@ body {
   color: var(--accent);
   font-weight: 600;
 }
+
+.mode-hint {
+  font-size: 11px;
+  color: var(--text-2);
+  margin: -4px 0 10px;
+}
+
+#generate-btn { margin-bottom: 10px; }
+
+.close-hint {
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+  margin: -2px 0 10px;
+}
+
+.how-it-works {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.how-it-works summary { cursor: pointer; }
+.how-it-works p { margin-top: 6px; }
 
 /* ── Pipeline panel ────────────────────────────────────────────────────────── */
 .pipeline-panel {

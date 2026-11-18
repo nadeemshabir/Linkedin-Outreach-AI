@@ -9,7 +9,54 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     return true;
   }
+
+  // A quick look for the side panel: name + headline, no scrolling.
+  if (msg.action === 'peekProfile') {
+    waitForTopCard().then(() => {
+      const { name, headline } = readTopCard();
+      sendResponse({ success: true, data: { name, headline, profileUrl: window.location.href.split('?')[0] } });
+    });
+    return true;
+  }
 });
+
+// LinkedIn changes pages without reloading. Right after the URL changes the
+// old person can still be on screen, so wait until the page title shows the
+// new name (or give up after a moment).
+async function waitForTopCard(timeoutMs = 2000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const h1 = (document.querySelector('h1')?.innerText || '').trim();
+    if (h1 && document.title.includes(h1)) return;
+    await wait(100);
+  }
+}
+
+// Name and headline from the top card of the profile.
+function readTopCard() {
+  const clean = (str) => (str || '').replace(/\s+/g, ' ').trim();
+
+  // "(3) Aoife Murphy | LinkedIn" → "Aoife Murphy"
+  const name = clean(document.querySelector('h1')?.innerText) ||
+               clean(document.title.replace(/^\(\d+\+?\)\s*/, '').split('|')[0]);
+
+  let headline = null;
+  for (const sec of document.querySelectorAll('section')) {
+    if (sec.querySelector('h1')) {
+      const pTags = Array.from(sec.querySelectorAll('p'))
+        .filter(p => p.children.length === 0)
+        .map(p => clean(p.innerText))
+        .filter(t => t.length > 5 && t !== name);
+      // Headline often contains | or @ or job title keywords
+      const headlineEl = pTags.find(t =>
+        t.includes('|') || t.includes('@') || t.includes('·') ||
+        /manager|engineer|analyst|developer|designer|founder|director|lead|specialist|consultant|intern|fellow|trainee/i.test(t)
+      ) || pTags[0];
+      if (headlineEl) { headline = headlineEl; break; }
+    }
+  }
+  return { name, headline };
+}
 
 async function scrapeWithScroll() {
   window.scrollTo(0, 800);  await wait(500);
@@ -42,27 +89,9 @@ function scrapeProfile() {
       .filter(t => t.length > 2 && !/^[·•\s]+$/.test(t));
   }
 
-  // ── NAME ──────────────────────────────────────────────────────────────────
-  const name = clean(document.querySelector('h1')?.innerText) ||
-               clean(document.title.split('|')[0]);
-
-  // ── HEADLINE ──────────────────────────────────────────────────────────────
-  let headline = null;
+  // ── NAME + HEADLINE ───────────────────────────────────────────────────────
+  const { name, headline } = readTopCard();
   const allSections = Array.from(document.querySelectorAll('section'));
-  for (const sec of allSections) {
-    if (sec.querySelector('h1')) {
-      const pTags = Array.from(sec.querySelectorAll('p'))
-        .filter(p => p.children.length === 0)
-        .map(p => clean(p.innerText))
-        .filter(t => t.length > 5 && t !== name);
-      // Headline often contains | or @ or job title keywords
-      const headlineEl = pTags.find(t =>
-        t.includes('|') || t.includes('@') || t.includes('·') ||
-        /manager|engineer|analyst|developer|designer|founder|director|lead|specialist|consultant|intern|fellow|trainee/i.test(t)
-      ) || pTags[0];
-      if (headlineEl) { headline = headlineEl; break; }
-    }
-  }
 
   // ── LOCATION ──────────────────────────────────────────────────────────────
   let location = null;

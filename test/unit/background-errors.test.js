@@ -1,87 +1,123 @@
+// Server errors and timeouts (B8, B9), through the background's job runner.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createFakeChrome } from '../helpers/fake-chrome.js';
-import { runIsolated } from '../helpers/load.js';
+import { createWorld, person, until, KEY, RUNNING } from '../helpers/world.js';
 
-function setup(fetchImpl, local = { licenseKey: 'ARK-TEST-0000-0000' }) {
-  const { chrome, dispatchMessage } = createFakeChrome({ local });
-  const fetch = vi.fn(fetchImpl);
-  runIsolated('background.js', { chrome, fetch, setTimeout, clearTimeout, AbortController });
-  return { fetch, send: dispatchMessage };
+const AOIFE = person('aoife', 'Aoife');
+const QUICK = { tabId: 1, mode: 'quick', messageType: 'Networking', tone: 'Neutral' };
+const DEEP  = { ...QUICK, mode: 'deep' };
+
+function world(server) {
+  return createWorld({
+    local: { licenseKey: KEY },
+    tabs: [{ id: 1, url: AOIFE.profileUrl, active: true }],
+    pages: { 1: AOIFE },
+    server,
+  });
 }
 
-const quick = {
-  action: 'generateMessage',
-  data: { profileData: { name: 'Aoife' }, settings: { userName: 'Rahul', userBio: '' }, messageType: 'Networking', tone: 'Neutral' },
-};
+async function finished(w) {
+  return until(async () => {
+    const job = await w.job('/in/aoife/');
+    return job && !RUNNING.includes(job.step) ? job : null;
+  });
+}
 
-const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const html = (status, text) => new Response(text, { status, headers: { 'Content-Type': 'text/html' } });
-
-// A fetch that never answers, but stops when the request is aborted.
-const hangingFetch = (_url, { signal } = {}) => new Promise((_resolve, reject) => {
-  signal?.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })));
-});
 
 afterEach(() => vi.useRealTimers());
 
 describe('server errors are shown in plain words (B8)', () => {
   it('an HTML error page (e.g. 502) does not leak a JSON parse error', async () => {
-    const { send } = setup(async () => html(502, '<!DOCTYPE html><html><body>Bad Gateway</body></html>'));
-    const res = await send(quick);
-    expect(res.success).toBe(false);
-    expect(res.error).not.toMatch(/Unexpected token|JSON/i);
-    expect(res.error).toMatch(/server is having trouble/i);
+    const w = world(() => html(502, '<!DOCTYPE html><html><body>Bad Gateway</body></html>'));
+    expect((await w.start(QUICK)).ok).toBe(true);
+    const job = await finished(w);
+    expect(job.step).toBe('error');
+    expect(job.error.message).not.toMatch(/Unexpected token|JSON/i);
+    expect(job.error.message).toMatch(/server is having trouble/i);
   });
 
-  it("keeps the server's own reason when it gives one", async () => {
-    const { send } = setup(async () => json(403, { error: 'Invalid license key.' }));
-    const res = await send(quick);
-    expect(res).toEqual({ success: false, error: 'Invalid license key.', code: 'http_403' });
+  it("keeps the server's own reason, and marks the key as rejected", async () => {
+    const w = world(() => [403, { error: 'Invalid license key.' }]);
+    await w.start(QUICK);
+    const job = await finished(w);
+    expect(job.error).toEqual({ message: 'Invalid license key.', code: 'http_403' });
+    const { keyStatus } = await w.chrome.storage.local.get('keyStatus');
+    expect(keyStatus).toMatchObject({ key: KEY, state: 'invalid', reason: 'Invalid license key.' });
   });
 
   it('explains a network failure', async () => {
-    const { send } = setup(async () => { throw new TypeError('Failed to fetch'); });
-    const res = await send(quick);
-    expect(res.success).toBe(false);
-    expect(res.error).toMatch(/could not reach the server/i);
+    const w = world(() => { throw new TypeError('Failed to fetch'); });
+    await w.start(QUICK);
+    const job = await finished(w);
+    expect(job.error.message).toMatch(/could not reach the server/i);
   });
 
   it('still returns the message when everything works', async () => {
-    const { send, fetch } = setup(async () => json(200, { success: true, message: 'Hi Aoife!' }));
-    const res = await send(quick);
-    expect(res).toEqual({ success: true, generatedMessage: 'Hi Aoife!' });
-    expect(fetch.mock.calls[0][0]).toMatch(/\/api\/generate\/quick$/);
+    const w = world(() => [200, { success: true, message: 'Hi Aoife!' }]);
+    await w.start(QUICK);
+    const job = await finished(w);
+    expect(job).toMatchObject({ step: 'done', message: 'Hi Aoife!' });
+    expect(w.calls[0].path).toBe('/api/generate/quick');
   });
 });
 
 describe('requests time out instead of spinning forever (B9)', () => {
   it('quick generate gives up with a clear message', async () => {
     vi.useFakeTimers();
-    const { send } = setup(hangingFetch);
-    const pending = send(quick);
+    const w = world(() => 'hang');
+    await w.start(QUICK);
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-    const res = await pending;
-    expect(res.success).toBe(false);
-    expect(res.error).toMatch(/took too long/i);
+    const job = await w.job('/in/aoife/');
+    expect(job.step).toBe('error');
+    expect(job.error.message).toMatch(/took too long/i);
   });
 
-  it('deep enrich gives up with a clear message', async () => {
+  it('deep enrich gives up with a clear message, at the right step', async () => {
     vi.useFakeTimers();
-    const { send } = setup(hangingFetch);
-    const pending = send({ type: 'RUN_ENRICH', payload: { rawProfileData: { name: 'Aoife' } } });
+    const w = world(() => 'hang');
+    await w.start(DEEP);
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
-    const res = await pending;
-    expect(res.status).toBe('error');
-    expect(res.error).toMatch(/took too long/i);
+    const job = await w.job('/in/aoife/');
+    expect(job).toMatchObject({ step: 'error', failedStep: 'enriching' });
+    expect(job.error.message).toMatch(/took too long/i);
   });
 
   it('key check gives up and says why', async () => {
     vi.useFakeTimers();
-    const { send } = setup(hangingFetch);
-    const pending = send({ type: 'VALIDATE_KEY', payload: { key: 'ARK-TEST-0000-0000' } });
+    const w = world(() => 'hang');
+    const pending = w.chrome.runtime.sendMessage({ type: 'VALIDATE_KEY', payload: { key: KEY } });
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
     const res = await pending;
     expect(res.valid).toBe(false);
     expect(res.reason).toMatch(/took too long/i);
+  });
+});
+
+describe('job guard rails', () => {
+  it('refuses to start without a license key', async () => {
+    const w = createWorld({ tabs: [{ id: 1, url: AOIFE.profileUrl, active: true }], pages: { 1: AOIFE } });
+    expect(await w.start(QUICK)).toMatchObject({ ok: false, code: 'no_key' });
+  });
+
+  it('refuses to start when the tab is not a LinkedIn profile', async () => {
+    const w = createWorld({ local: { licenseKey: KEY }, tabs: [{ id: 1, url: 'https://www.linkedin.com/feed/', active: true }] });
+    expect(await w.start(QUICK)).toMatchObject({ ok: false });
+  });
+
+  it('stops if the tab moved to another person before reading', async () => {
+    const w = world(() => [200, { success: true, message: 'x' }]);
+    // The first look at the tab (job start) sees Aoife; by the time the page
+    // is read, the user has clicked through to someone else.
+    const realGet = w.chrome.tabs.get;
+    let looks = 0;
+    w.chrome.tabs.get = vi.fn(async (id) => {
+      const tab = await realGet(id);
+      if (++looks > 1) tab.url = 'https://www.linkedin.com/in/someone-else/';
+      return tab;
+    });
+    await w.start(QUICK);
+    const job = await finished(w);
+    expect(job.step).toBe('error');
+    expect(job.error.message).toMatch(/moved to another page/i);
   });
 });

@@ -1,21 +1,40 @@
 'use strict';
 
+// sidepanel.js — the extension's UI. It runs in Chrome's side panel (or as a
+// popup where the Side Panel API is missing). It only draws state: the
+// background does the work and saves every step, so closing this page never
+// loses a message.
+
 // ─── State ────────────────────────────────────────────────────────────────────
-let currentProfile     = null;
-let isGenerating       = false;
-let currentMode        = 'simple';
-let deepProfileJSON    = null;
-let deepEnrichmentJSON = null;
-let isEnriching        = false;
+const IS_POPUP      = new URLSearchParams(location.search).get('mode') === 'popup';
+const RUNNING_STEPS = ['reading', 'enriching', 'writing'];
+const STEP_ORDER    = { quick: ['reading', 'writing'], deep: ['reading', 'enriching', 'writing'] };
+const STALE_MS      = 60 * 1000; // no heartbeat for this long = the run died
+const STEP_TEXT     = {
+  reading:   'Reading the profile…',
+  enriching: 'Finding talking points — about 20 seconds…',
+  writing:   'Writing your message…'
+};
+
+let activeTabId    = null;
+let profileKey     = null;   // "/in/<slug>/" of the active tab, or null
+let job            = null;   // the background's job for this profile
+let peek           = null;   // quick look at the profile (name, headline)
+let shownMessageId = null;   // which generated message the textarea shows
+let currentMode    = 'simple';
+let peekTimer      = null;
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
+  document.documentElement.classList.add(IS_POPUP ? 'is-popup' : 'is-panel');
   initTabs();
   initModeToggle();
   wireSettingsEvents();
   wireCurrentEvents();
   wireRecentEvents();
-  await checkCurrentPage();
+  watchBrowser();
+  await restoreChoices();
+  await refreshActiveTab();
   await loadSettings();
   await renderRecentContacts();
   await checkLicenseStatus();
@@ -78,27 +97,6 @@ function renderKeyStatus(st) {
   if (view.warn) document.getElementById('key-warning-text').textContent = view.warn;
 }
 
-// Keep the badge honest after each generation.
-async function noteKeyRejected(reason) {
-  const { licenseKey } = await loadStoredSettings();
-  const status = { key: (licenseKey || '').trim(), state: 'invalid', reason, checkedAt: Date.now() };
-  await storageSet({ keyStatus: status });
-  renderKeyStatus(status);
-}
-
-async function noteRemaining(remaining) {
-  if (remaining === undefined || remaining === null) return;
-  const { keyStatus } = await storageGet(['keyStatus']);
-  if (!keyStatus || keyStatus.state !== 'valid') return;
-  keyStatus.remaining = remaining;
-  await storageSet({ keyStatus });
-  renderKeyStatus(keyStatus);
-}
-
-function isKeyRejection(code) {
-  return code === 'http_401' || code === 'http_403';
-}
-
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
 function initTabs() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -107,10 +105,12 @@ function initTabs() {
 }
 
 function switchTab(name) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  document.querySelector(`.tab-btn[data-tab="${name}"]`).classList.add('active');
-  document.getElementById(`tab-${name}`).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    const on = b.dataset.tab === name;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${name}`));
   if (name === 'recent') renderRecentContacts();
 }
 
@@ -122,64 +122,230 @@ function initModeToggle() {
 
 function setMode(mode) {
   currentMode = mode;
-  document.getElementById('mode-simple').classList.toggle('active', mode === 'simple');
-  document.getElementById('mode-deep').classList.toggle('active', mode === 'deep');
-  document.getElementById('simple-mode-ui').classList.toggle('hidden', mode === 'deep');
-  document.getElementById('deep-mode-ui').classList.toggle('hidden', mode === 'simple');
-  hideMessage();
-  clearCurrentStatus();
-}
-
-// ─── Page check ───────────────────────────────────────────────────────────────
-async function checkCurrentPage() {
-  const tabs      = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab       = tabs[0];
-  const onProfile = tab && tab.url && /linkedin\.com\/in\/[^/?#]+/.test(tab.url);
-  document.getElementById('scrape-btn').disabled  = !onProfile;
-  document.getElementById('enrich-btn').disabled  = !onProfile;
-  if (!onProfile) {
-    document.getElementById('page-warning').classList.remove('hidden');
-  } else {
-    document.getElementById('page-warning').classList.add('hidden');
+  for (const [id, m] of [['mode-simple', 'simple'], ['mode-deep', 'deep']]) {
+    const btn = document.getElementById(id);
+    btn.classList.toggle('active', mode === m);
+    btn.setAttribute('aria-checked', String(mode === m));
   }
-  return onProfile;
+  document.getElementById('mode-hint').textContent = mode === 'deep'
+    ? 'Slower (about 20s). Also finds company news and talking points.'
+    : 'Fast. Uses the profile page only.';
+  renderJob();
 }
 
-// ─── Wire events ──────────────────────────────────────────────────────────────
+// ─── Follow the browser ───────────────────────────────────────────────────────
+// The panel stays open while you browse, so it follows the active tab and
+// LinkedIn's in-page navigation, and redraws when the background saves progress.
+function watchBrowser() {
+  chrome.tabs.onActivated.addListener(() => refreshActiveTab());
+  chrome.tabs.onUpdated.addListener((tabId, info) => {
+    if (tabId === activeTabId && (info.url || info.status === 'complete')) refreshActiveTab();
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    const id = profileKey && `job:${profileKey}`;
+    if (area === 'session' && id && changes[id]) {
+      job = changes[id].newValue || null;
+      renderJob();
+    }
+    if (area === 'local' && changes.keyStatus && changes.keyStatus.newValue) renderKeyStatus(changes.keyStatus.newValue);
+    if (area === 'local' && changes.recentContacts) renderRecentContacts();
+  });
+  // A run whose worker died stops sending heartbeats. Check now and then.
+  setInterval(() => { if (job && RUNNING_STEPS.includes(job.step)) renderJob(); }, 10000);
+}
+
+async function refreshActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  activeTabId = tab ? tab.id : null;
+  const key   = tab ? ProfileUrl.key(tab.url) : null;
+  document.getElementById('page-warning').classList.toggle('hidden', !!key);
+
+  if (key !== profileKey) {
+    profileKey     = key;
+    peek           = null;
+    shownMessageId = null;
+    job            = key ? await loadJob(key) : null;
+    if (key !== profileKey) return; // the user moved on while we were loading
+    if (job) setMode(job.mode === 'deep' ? 'deep' : 'simple');
+  }
+  renderJob();
+  if (key && !(job && job.profile)) peekActiveProfile(key);
+}
+
+async function loadJob(key) {
+  const id = `job:${key}`;
+  return (await chrome.storage.session.get(id))[id] || null;
+}
+
+// Show who you are about to message straight away, before any generation.
+function peekActiveProfile(key) {
+  clearTimeout(peekTimer);
+  peekTimer = setTimeout(async () => {
+    const res = await sendMessage({ type: 'PEEK_PROFILE', payload: { tabId: activeTabId } });
+    if (key !== profileKey || !res || !res.success || !res.data) return;
+    if (ProfileUrl.key(res.data.profileUrl) !== key) return; // page not updated yet
+    peek = res.data;
+    renderJob();
+  }, 250);
+}
+
+// ─── Generate ─────────────────────────────────────────────────────────────────
 function wireCurrentEvents() {
-  document.getElementById('scrape-btn').addEventListener('click', handleScrapeAndGenerate);
-  document.getElementById('enrich-btn').addEventListener('click', handleEnrich);
-  document.getElementById('deep-generate-btn').addEventListener('click', handleDeepGenerate);
-  document.getElementById('regenerate-btn').addEventListener('click', handleRegenerate);
+  document.getElementById('generate-btn').addEventListener('click', () => handleGenerate());
+  document.getElementById('regenerate-btn').addEventListener('click', () => handleGenerate({ regenerate: true }));
   document.getElementById('copy-btn').addEventListener('click', handleCopy);
   document.getElementById('generated-message').addEventListener('input', handleMessageEdited);
+  document.getElementById('message-type').addEventListener('change', saveChoices);
+  document.getElementById('tone').addEventListener('change', saveChoices);
 }
 
+async function handleGenerate({ regenerate = false } = {}) {
+  if (!profileKey || isRunning(job)) return;
+
+  const s = await loadStoredSettings();
+  if (!s.licenseKey) {
+    showCurrentStatus('No license key. Add it in Settings.', 'error');
+    switchTab('settings');
+    return;
+  }
+
+  setBusy(true);
+  const res = await sendMessage({
+    type: 'START_JOB',
+    payload: {
+      tabId:       activeTabId,
+      mode:        currentMode === 'deep' ? 'deep' : 'quick',
+      messageType: document.getElementById('message-type').value,
+      tone:        document.getElementById('tone').value,
+      regenerate
+    }
+  });
+  if (!res || !res.ok) {
+    setBusy(false);
+    showCurrentStatus((res && res.error) || 'Could not start. Please try again.', 'error');
+    if (res && res.code === 'no_key') switchTab('settings');
+  }
+  // From here on, progress arrives through storage changes (see watchBrowser).
+}
+
+// Save the user's own edits, so Recent and a reopened panel show them.
 function handleMessageEdited() {
   updateCharCount();
-  const url = currentProfileUrl();
-  if (url) Cache.updateMessage(url, document.getElementById('generated-message').value);
+  if (!job || !job.messageId) return;
+  const text = document.getElementById('generated-message').value;
+  job = { ...job, editedMessage: text };
+  chrome.storage.session.set({ [`job:${profileKey}`]: job });
+  Cache.updateMessage(job.profileUrl, text);
 }
 
-// The URL we scraped ourselves is the reliable ID for a person.
-// (The server's profileJSON may not include profileUrl.)
-function currentProfileUrl() {
-  return (currentProfile && currentProfile.profileUrl) || (deepProfileJSON && deepProfileJSON.profileUrl) || '';
+async function restoreChoices() {
+  const { lastMessageType, lastTone } = await storageGet(['lastMessageType', 'lastTone']);
+  if (lastMessageType) document.getElementById('message-type').value = lastMessageType;
+  if (lastTone)        document.getElementById('tone').value = lastTone;
 }
 
-async function saveToRecent(message, profile) {
-  const profileUrl = currentProfileUrl();
-  if (!profileUrl) return;
-  await Cache.addContact({
-    profileUrl,
-    name:      profile.name           || 'Unknown',
-    headline:  profile.headline       || '',
-    company:   profile.currentCompany || '',
-    message,
-    timestamp: Date.now()
+function saveChoices() {
+  storageSet({
+    lastMessageType: document.getElementById('message-type').value,
+    lastTone:        document.getElementById('tone').value
   });
 }
 
+// ─── Draw the job ─────────────────────────────────────────────────────────────
+function isRunning(j) {
+  if (!j || !RUNNING_STEPS.includes(j.step)) return false;
+  const lastSign = j.heartbeatAt || j.updatedAt || j.startedAt || 0;
+  return Date.now() - lastSign < STALE_MS;
+}
+
+function renderJob() {
+  const busy   = isRunning(job);
+  const stale  = !!job && RUNNING_STEPS.includes(job.step) && !busy;
+  const person = (job && (job.profileJSON || job.profile)) || peek;
+
+  if (profileKey && person) renderProfileCard(person); else hideProfileCard();
+  renderSteps(stale);
+
+  if (job && job.enrichmentJSON) renderHooks(job.enrichmentJSON); else hideHooks();
+
+  if (job && job.message) {
+    if (shownMessageId !== job.messageId) {
+      shownMessageId = job.messageId;
+      renderMessage(job.editedMessage != null ? job.editedMessage : job.message);
+    }
+  } else {
+    shownMessageId = null;
+    hideMessage();
+  }
+
+  if (!profileKey || !job)       clearCurrentStatus();
+  else if (busy)                 showCurrentStatus(STEP_TEXT[job.step]);
+  else if (stale)                showCurrentStatus('This run was interrupted. Please try again.', 'error');
+  else if (job.step === 'error') showCurrentStatus(job.error ? job.error.message : 'Something went wrong.', 'error');
+  else if (job.step === 'done')  showCurrentStatus(doneText(job), 'success');
+  else                           clearCurrentStatus();
+
+  setBusy(busy);
+}
+
+function doneText(j) {
+  const left = j.remaining !== undefined && j.remaining !== null ? ` ${j.remaining} left today.` : '';
+  return `Message ready.${left}`;
+}
+
+function renderSteps(stale) {
+  const mode = currentMode === 'deep' ? 'deep' : 'quick';
+  const show = !!job && job.mode === mode;
+  document.getElementById('steps').classList.toggle('hidden', !show);
+  document.getElementById('step-enriching').classList.toggle('hidden', mode !== 'deep');
+  document.querySelector('#step-writing .layer-badge').textContent = mode === 'deep' ? '3' : '2';
+  if (!show) return;
+
+  const order  = STEP_ORDER[job.mode];
+  const failed = job.step === 'error' || stale;
+  const at     = job.step === 'done' ? order.length : order.indexOf(failed ? (job.failedStep || job.step) : job.step);
+  order.forEach((step, i) => {
+    if (i < at)        setStepStatus(step, 'done', 'Done');
+    else if (i === at) setStepStatus(step, failed ? 'error' : 'running', failed ? 'Failed' : 'Working…');
+    else               setStepStatus(step, '', '');
+  });
+}
+
+function setStepStatus(step, state, text) {
+  const row = document.getElementById(`step-${step}`);
+  row.querySelector('.status-dot').className = `status-dot ${state}`;
+  row.querySelector('.layer-status-text').textContent = text;
+}
+
+function setBusy(on) {
+  document.getElementById('generate-btn').disabled = on || !profileKey;
+  document.getElementById('generate-label').textContent = on ? 'Working…' : 'Generate message';
+  document.getElementById('generate-spinner').classList.toggle('hidden', !on);
+  document.getElementById('regenerate-btn').disabled = on;
+  document.getElementById('generated-message').readOnly = on;
+  document.getElementById('close-hint').classList.toggle('hidden', !on);
+}
+
+function renderHooks(enrichmentJSON) {
+  const panel = document.getElementById('hooks-panel');
+  const list  = document.getElementById('hooks-list');
+  list.innerHTML = '';
+  const hooks = enrichmentJSON.topHooks?.length
+    ? enrichmentJSON.topHooks
+    : (enrichmentJSON.companyNews || []).map(n => n.relevance || n.headline).filter(Boolean);
+  if (!hooks.length) { hideHooks(); return; }
+  hooks.slice(0, 3).forEach(hook => {
+    const d = document.createElement('div');
+    d.className   = 'hook-item';
+    d.textContent = hook;
+    list.appendChild(d);
+  });
+  panel.classList.remove('hidden');
+}
+
+function hideHooks() { document.getElementById('hooks-panel').classList.add('hidden'); }
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
 function wireSettingsEvents() {
   document.getElementById('save-settings-btn').addEventListener('click', handleSaveSettings);
   document.getElementById('validate-btn').addEventListener('click', handleValidateKey);
@@ -204,192 +370,6 @@ function wireSettingsEvents() {
   });
 }
 
-function wireRecentEvents() {
-  document.getElementById('clear-recent-btn').addEventListener('click', async () => {
-    await Cache.clearContacts();
-    renderRecentContacts();
-  });
-}
-
-// ─── Simple Mode ──────────────────────────────────────────────────────────────
-async function handleScrapeAndGenerate() {
-  if (isGenerating) return;
-
-  const s = await loadStoredSettings();
-  if (!s.licenseKey) {
-    showCurrentStatus('No license key. Add it in Settings.', 'error');
-    switchTab('settings');
-    return;
-  }
-
-  isGenerating = true;
-  hideMessage();
-  setButtonLoading('scrape-btn', 'btn-label', 'btn-spinner', true, 'Scraping profile…');
-  clearCurrentStatus();
-
-  try {
-    const profile = await sendToBackground({ action: 'scrapeProfile' });
-    currentProfile = profile;
-    renderProfileCard(profile);
-    setButtonLoading('scrape-btn', 'btn-label', 'btn-spinner', true, 'Generating message…');
-
-    const message = await callQuickGenerate(profile);
-    renderMessage(message);
-    await saveToRecent(message, profile);
-
-    showCurrentStatus('Message ready.', 'success');
-  } catch (err) {
-    showCurrentStatus(err.message, 'error');
-    if (isKeyRejection(err.code)) noteKeyRejected(err.message);
-  } finally {
-    isGenerating = false;
-    setButtonLoading('scrape-btn', 'btn-label', 'btn-spinner', false, 'Scrape &amp; Generate');
-  }
-}
-
-async function callQuickGenerate(profile) {
-  const settings    = await loadStoredSettings();
-  const messageType = document.getElementById('message-type').value;
-  const tone        = document.getElementById('tone').value;
-  return sendToBackground({ action: 'generateMessage', data: { profileData: profile, settings, messageType, tone } });
-}
-
-async function handleRegenerate() {
-  if (isGenerating) return;
-  if (currentMode === 'deep') { handleDeepGenerate(); return; }
-  if (!currentProfile) return;
-
-  isGenerating = true;
-  setButtonLoading('scrape-btn', 'btn-label', 'btn-spinner', true, 'Regenerating…');
-
-  try {
-    const message = await callQuickGenerate(currentProfile);
-    renderMessage(message);
-    await saveToRecent(message, currentProfile);
-    showCurrentStatus('Regenerated!', 'success');
-  } catch (err) {
-    showCurrentStatus(err.message, 'error');
-    if (isKeyRejection(err.code)) noteKeyRejected(err.message);
-  } finally {
-    isGenerating = false;
-    setButtonLoading('scrape-btn', 'btn-label', 'btn-spinner', false, 'Scrape &amp; Generate');
-  }
-}
-
-// ─── Deep Mode ────────────────────────────────────────────────────────────────
-async function handleEnrich() {
-  if (isEnriching) return;
-
-  const s = await loadStoredSettings();
-  if (!s.licenseKey) {
-    showCurrentStatus('No license key. Add it in Settings.', 'error');
-    switchTab('settings');
-    return;
-  }
-
-  deepProfileJSON = null;
-  deepEnrichmentJSON = null;
-  resetLayerStatuses();
-  document.getElementById('hooks-panel').classList.add('hidden');
-  document.getElementById('deep-generate-btn').disabled = true;
-  hideMessage();
-  clearCurrentStatus();
-
-  isEnriching = true;
-  setButtonLoading('enrich-btn', 'enrich-label', 'enrich-spinner', true, 'Scraping profile…');
-  setLayerStatus(1, 'running', 'Scraping…');
-
-  let rawProfileData;
-  try {
-    rawProfileData = await sendToBackground({ action: 'scrapeProfile' });
-  } catch (err) {
-    setLayerStatus(1, 'error', 'Failed');
-    showCurrentStatus('Could not scrape. Are you on a LinkedIn profile page?', 'error');
-    isEnriching = false;
-    setButtonLoading('enrich-btn', 'enrich-label', 'enrich-spinner', false, 'Scrape + Enrich (L1 + L2)');
-    return;
-  }
-
-  currentProfile = rawProfileData;
-  renderProfileCard(rawProfileData);
-  setLayerStatus(1, 'running', 'Parsing…');
-  setButtonLoading('enrich-btn', 'enrich-label', 'enrich-spinner', true, 'Running AI layers…');
-  showCurrentStatus('Enriching — this takes ~20 seconds…');
-
-  chrome.runtime.sendMessage({ type: 'RUN_ENRICH', payload: { rawProfileData } }, (response) => {
-    isEnriching = false;
-    setButtonLoading('enrich-btn', 'enrich-label', 'enrich-spinner', false, 'Scrape + Enrich (L1 + L2)');
-
-    if (chrome.runtime.lastError || !response) {
-      setLayerStatus(1, 'error', 'Error');
-      setLayerStatus(2, 'error', 'Error');
-      showCurrentStatus('Pipeline error. Check your connection.', 'error');
-      return;
-    }
-
-    if (response.status === 'error') {
-      setLayerStatus(1, 'error', 'Error');
-      setLayerStatus(2, 'error', 'Error');
-      showCurrentStatus(response.error, 'error');
-      if (isKeyRejection(response.code)) noteKeyRejected(response.error);
-      return;
-    }
-
-    setLayerStatus(1, 'done', 'Done');
-    setLayerStatus(2, 'done', 'Done');
-    deepProfileJSON    = response.profileJSON;
-    deepEnrichmentJSON = response.enrichmentJSON;
-    renderProfileCard({ name: deepProfileJSON.name, headline: deepProfileJSON.headline, currentCompany: deepProfileJSON.currentCompany });
-    renderHooks(deepEnrichmentJSON);
-    setLayerStatus(3, '', 'Ready');
-    document.getElementById('deep-generate-btn').disabled = false;
-    showCurrentStatus('Enrichment done. Hit Generate Message.', 'success');
-  });
-}
-
-async function handleDeepGenerate() {
-  if (isGenerating || !deepProfileJSON || !deepEnrichmentJSON) return;
-
-  isGenerating = true;
-  setButtonLoading('deep-generate-btn', 'deep-gen-label', 'deep-gen-spinner', true, 'Claude is writing…');
-  setLayerStatus(3, 'running', 'Writing…');
-  showCurrentStatus('Layer 3: Claude writing message…');
-  hideMessage();
-
-  const messageType = document.getElementById('message-type').value;
-  const tone        = document.getElementById('tone').value;
-
-  chrome.runtime.sendMessage(
-    { type: 'RUN_GENERATE', payload: { profileJSON: deepProfileJSON, enrichmentJSON: deepEnrichmentJSON, messageType, tone } },
-    async (response) => {
-      isGenerating = false;
-      setButtonLoading('deep-generate-btn', 'deep-gen-label', 'deep-gen-spinner', false, 'Generate Message (L3 — Claude)');
-
-      if (chrome.runtime.lastError || !response) {
-        setLayerStatus(3, 'error', 'Error');
-        showCurrentStatus('Generation failed.', 'error');
-        return;
-      }
-
-      if (response.status === 'error') {
-        setLayerStatus(3, 'error', 'Error');
-        showCurrentStatus(response.error, 'error');
-        if (isKeyRejection(response.code)) noteKeyRejected(response.error);
-        return;
-      }
-
-      setLayerStatus(3, 'done', 'Done');
-      renderMessage(response.generatedMessage);
-      const rem = response.remaining !== undefined ? ` (${response.remaining} messages left today)` : '';
-      showCurrentStatus(`Message ready.${rem}`, 'success');
-      noteRemaining(response.remaining);
-
-      await saveToRecent(response.generatedMessage, deepProfileJSON);
-    }
-  );
-}
-
-// ─── Settings ─────────────────────────────────────────────────────────────────
 async function loadSettings() {
   const s = await loadStoredSettings();
   if (s.licenseKey) document.getElementById('license-key').value = s.licenseKey;
@@ -454,34 +434,6 @@ async function handleValidateKey() {
   }
 }
 
-// ─── Pipeline UI ──────────────────────────────────────────────────────────────
-function setLayerStatus(layer, status, text) {
-  document.getElementById(`l${layer}-dot`).className = `status-dot ${status}`;
-  document.getElementById(`l${layer}-text`).textContent = text;
-}
-
-function resetLayerStatuses() {
-  [1,2].forEach(n => setLayerStatus(n, '', 'Ready'));
-  setLayerStatus(3, '', 'Waiting');
-}
-
-function renderHooks(enrichmentJSON) {
-  const panel = document.getElementById('hooks-panel');
-  const list  = document.getElementById('hooks-list');
-  list.innerHTML = '';
-  const hooks = enrichmentJSON.topHooks?.length
-    ? enrichmentJSON.topHooks
-    : (enrichmentJSON.companyNews || []).map(n => n.relevance || n.headline).filter(Boolean);
-  if (!hooks.length) return;
-  hooks.slice(0, 3).forEach(hook => {
-    const d = document.createElement('div');
-    d.className   = 'hook-item';
-    d.textContent = hook;
-    list.appendChild(d);
-  });
-  panel.classList.remove('hidden');
-}
-
 // ─── UI helpers ───────────────────────────────────────────────────────────────
 function renderProfileCard(data) {
   const section = document.getElementById('profile-section');
@@ -492,6 +444,8 @@ function renderProfileCard(data) {
   document.getElementById('profile-headline').textContent = data.headline || '';
   document.getElementById('profile-company').textContent  = data.currentCompany || '';
 }
+
+function hideProfileCard() { document.getElementById('profile-section').classList.add('hidden'); }
 
 function renderMessage(text) {
   document.getElementById('generated-message').value = text;
@@ -541,13 +495,14 @@ function showSettingsStatus(msg, type = '') {
   setTimeout(() => el.classList.add('hidden'), 2500);
 }
 
-function setButtonLoading(btnId, labelId, spinnerId, loading, labelText) {
-  document.getElementById(btnId).disabled = loading;
-  document.getElementById(labelId).innerHTML = labelText;
-  document.getElementById(spinnerId).classList.toggle('hidden', !loading);
+// ─── Recent contacts ──────────────────────────────────────────────────────────
+function wireRecentEvents() {
+  document.getElementById('clear-recent-btn').addEventListener('click', async () => {
+    await Cache.clearContacts();
+    renderRecentContacts();
+  });
 }
 
-// ─── Recent contacts ──────────────────────────────────────────────────────────
 async function renderRecentContacts() {
   const contacts  = await Cache.getContacts();
   const listEl    = document.getElementById('recent-list');
@@ -599,20 +554,11 @@ function buildContactCard(contact, idx) {
 }
 
 // ─── Chrome messaging ─────────────────────────────────────────────────────────
-function sendToBackground(msg) {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(msg, (response) => {
-      if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
-      if (!response) { reject(new Error('No response from background.')); return; }
-      if (!response.success) {
-        const err = new Error(response.error || 'Background returned an error.');
-        err.code  = response.code;
-        reject(err);
-        return;
-      }
-      if (response.data !== undefined) { resolve(response.data); return; }
-      if (response.generatedMessage !== undefined) { resolve(response.generatedMessage); return; }
-      reject(new Error('Unexpected response: ' + JSON.stringify(Object.keys(response))));
+function sendMessage(msg) {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage(msg, (res) => {
+      if (chrome.runtime.lastError) resolve({ ok: false, success: false, error: chrome.runtime.lastError.message });
+      else resolve(res);
     });
   });
 }

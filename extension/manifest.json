@@ -3,10 +3,12 @@
   "name": "LinkedIn Outreach AI",
   "version": "3.0.2",
   "description": "AI-powered LinkedIn outreach message generator. Requires a license key.",
+  "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
     "storage",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
@@ -16,8 +18,10 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "sidepanel.html",
     "default_title": "LinkedIn Outreach AI"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "content_scripts": [
     {
