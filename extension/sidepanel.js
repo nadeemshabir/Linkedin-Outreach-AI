@@ -970,7 +970,9 @@ function renderTrackedBanner() {
   const box = document.getElementById('tracked-banner');
   if (!profileKey || !contact) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
-  document.getElementById('tracked-text').textContent = `In your tracker · ${statusDate(contact)}`;
+  const last = (contact.history || [])[contact.history.length - 1];
+  const seen = last && last.source === 'linkedin' && last.status === contact.status ? ' · seen on LinkedIn' : '';
+  document.getElementById('tracked-text').textContent = `In your tracker · ${statusDate(contact)}${seen}`;
   document.getElementById('tracked-status').innerHTML = statusOptions(contact.status);
   const step = Tracker.nextStep(contact);
   const next = document.getElementById('tracked-next');

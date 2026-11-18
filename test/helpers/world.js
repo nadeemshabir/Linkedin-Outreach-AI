@@ -43,7 +43,10 @@ export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, p
     if (!page) throw new Error('Could not establish connection. Receiving end does not exist.');
     if (msg.action === 'scrapeProfile') return { success: true, data: { ...page } };
     if (msg.action === 'peekProfile') {
-      return { success: true, data: { name: page.name, headline: page.headline, profileUrl: page.profileUrl } };
+      return {
+        success: true,
+        data: { name: page.name, headline: page.headline, profileUrl: page.profileUrl, relationship: page.relationship || 'none' },
+      };
     }
     return undefined;
   });

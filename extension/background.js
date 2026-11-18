@@ -178,6 +178,7 @@ async function runJob(job, licenseKey) {
     if (!job.profile) {
       await setStep(job, 'reading');
       job.profile = await scrapeTab(job.tabId, job.profileKey);
+      await syncStatusFromPage(job.profileKey, job.profile.relationship).catch(() => {});
     }
 
     // What you have in common (needs your own profile, added in Settings).
@@ -312,10 +313,28 @@ async function scrapeTab(tabId, profileKey) {
 async function peekProfile({ tabId }) {
   try {
     const tab = await getTab(tabId);
-    if (!tab || !ProfileUrl.key(tab.url)) return { success: false };
-    return await askContentScript(tabId, { action: 'peekProfile' });
+    const profileKey = tab && ProfileUrl.key(tab.url);
+    if (!profileKey) return { success: false };
+    const res = await askContentScript(tabId, { action: 'peekProfile' });
+    if (res && res.success && res.data) await syncStatusFromPage(profileKey, res.data.relationship).catch(() => {});
+    return res;
   } catch (err) {
     return { success: false, error: err.message };
+  }
+}
+
+// The profile page shows how you stand with someone: a "Pending" button
+// means your invite is waiting; "· 1st" means they accepted. Move the
+// tracker forward to match - never backwards, and only for people you
+// reached with a connection note (for a message, "1st" was true all along).
+const STATUS_ORDER = ['drafted', 'sent', 'connected', 'replied'];
+async function syncStatusFromPage(profileKey, relationship) {
+  const target = { pending: 'sent', connected: 'connected' }[relationship];
+  if (!target) return;
+  const contact = await Tracker.find(profileKey);
+  if (!contact || contact.channel === 'message') return;
+  if (STATUS_ORDER.indexOf(target) > STATUS_ORDER.indexOf(contact.status)) {
+    await Tracker.setStatus(profileKey, target, 'linkedin');
   }
 }
 

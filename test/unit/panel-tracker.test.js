@@ -124,6 +124,50 @@ describe('tracker', () => {
     expect(statusOf(card)).toBe('drafted');
   });
 
+  describe('status updates itself from the profile page', () => {
+    const tracked = (status, channel = 'note') => ({
+      '/in/aoife/': {
+        profileKey: '/in/aoife/', profileUrl: AOIFE.profileUrl, name: 'Aoife Murphy', message: 'Hi Aoife',
+        channel, status, createdAt: Date.now(), updatedAt: Date.now(), history: [{ status, at: Date.now(), source: 'you' }],
+      },
+    });
+    function onPage(relationship, contacts) {
+      return createWorld({
+        local: { licenseKey: KEY, keyStatus: VALID(), contacts },
+        tabs: [{ id: 1, url: AOIFE.profileUrl, active: true }],
+        pages: { 1: { ...AOIFE, relationship } },
+      });
+    }
+
+    it('a "Pending" invite on their profile marks your note as sent', async () => {
+      const w = onPage('pending', tracked('drafted'));
+      const panel = await openPanel(w);
+      await until(() => panel.$('tracked-text').textContent.includes('Sent'));
+      expect(panel.$('tracked-text').textContent).toMatch(/· seen on LinkedIn$/);
+      const [c] = await w.recent();
+      expect(c.history.at(-1)).toMatchObject({ status: 'sent', source: 'linkedin' });
+    });
+
+    it('once they accept ("1st"), it says to send your message now', async () => {
+      const w = onPage('connected', tracked('sent'));
+      const panel = await openPanel(w);
+      await until(() => panel.$('tracked-next').textContent === 'Aoife accepted your invite. Now send your message.');
+      expect((await w.recent())[0].status).toBe('connected');
+    });
+
+    it('never moves backwards, and leaves people you messaged alone', async () => {
+      let w = onPage('connected', tracked('replied'));
+      await openPanel(w);
+      await settle(30);
+      expect((await w.recent())[0].status).toBe('replied');
+
+      w = onPage('connected', tracked('sent', 'message'));
+      await openPanel(w);
+      await settle(30);
+      expect((await w.recent())[0].status).toBe('sent');
+    });
+  });
+
   it('"Clear all" needs a second click', async () => {
     const w = world();
     const panel = await openPanel(w);
