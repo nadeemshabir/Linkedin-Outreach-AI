@@ -94,7 +94,7 @@ async function handleQuickGenerate(data, sendResponse) {
     if (!result.success) throw new Error(result.error || 'Generation failed.');
     sendResponse({ success: true, generatedMessage: result.message });
   } catch (err) {
-    sendResponse({ success: false, error: err.message });
+    sendResponse({ success: false, error: err.message, code: err.code });
   }
 }
 
@@ -109,7 +109,7 @@ async function handleEnrich({ rawProfileData }, sendResponse) {
     if (!result.success) throw new Error(result.error || 'Enrichment failed.');
     sendResponse({ status: 'enrich_complete', profileJSON: result.profileJSON, enrichmentJSON: result.enrichmentJSON });
   } catch (err) {
-    sendResponse({ status: 'error', error: err.message });
+    sendResponse({ status: 'error', error: err.message, code: err.code });
   }
 }
 
@@ -127,7 +127,7 @@ async function handleDeepGenerate({ profileJSON, enrichmentJSON, messageType, to
     if (!result.success) throw new Error(result.error || 'Generation failed.');
     sendResponse({ status: 'generate_complete', generatedMessage: result.message, remaining: result.remaining });
   } catch (err) {
-    sendResponse({ status: 'error', error: err.message });
+    sendResponse({ status: 'error', error: err.message, code: err.code });
   }
 }
 

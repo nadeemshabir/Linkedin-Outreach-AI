@@ -22,21 +22,81 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ─── License key status in header ────────────────────────────────────────────
+// The badge shows what the server says about the key, not just whether one
+// is saved. The answer is cached for 10 minutes per key.
+const KEY_STATUS_TTL_MS = 10 * 60 * 1000;
+const UNVERIFIED_CODES  = /^(offline|timeout|bad_response|http_5\d\d)$/;
+
 async function checkLicenseStatus() {
   const s   = await loadStoredSettings();
   const key = (s.licenseKey || '').trim();
-  const el  = document.getElementById('key-status');
+  if (!key) { renderKeyStatus({ state: 'none' }); return; }
 
-  if (!key) {
-    el.textContent = 'No Key';
-    el.className   = 'key-status inactive';
-    document.getElementById('no-key-warning').classList.remove('hidden');
-    return;
+  const { keyStatus } = await storageGet(['keyStatus']);
+  const fresh = keyStatus && keyStatus.key === key && Date.now() - keyStatus.checkedAt < KEY_STATUS_TTL_MS;
+  if (fresh) { renderKeyStatus(keyStatus); return; }
+
+  renderKeyStatus({ state: 'checking' });
+  const status = toKeyStatus(key, await validateKeyWithServer(key));
+  if (status.state !== 'unverified') await storageSet({ keyStatus: status });
+  renderKeyStatus(status);
+}
+
+function validateKeyWithServer(key) {
+  return new Promise(resolve => {
+    chrome.runtime.sendMessage({ type: 'VALIDATE_KEY', payload: { key } }, (res) => {
+      if (chrome.runtime.lastError) resolve({ valid: false, reason: chrome.runtime.lastError.message, code: 'offline' });
+      else resolve(res);
+    });
+  });
+}
+
+function toKeyStatus(key, result) {
+  const checkedAt = Date.now();
+  if (result && result.valid) return { key, state: 'valid', remaining: result.remaining, checkedAt };
+  if (!result || UNVERIFIED_CODES.test(result.code || '')) {
+    return { key, state: 'unverified', reason: (result && result.reason) || 'No answer from the server.', checkedAt };
   }
+  return { key, state: 'invalid', reason: result.reason || 'Invalid key.', checkedAt };
+}
 
-  el.textContent = '● Active';
-  el.className   = 'key-status active';
-  document.getElementById('no-key-warning').classList.add('hidden');
+function renderKeyStatus(st) {
+  const hasCount = st.remaining !== undefined && st.remaining !== null && st.remaining !== '';
+  const views = {
+    none:       { text: 'No Key',       cls: 'inactive',   warn: 'No license key found. Add yours in the Settings tab.' },
+    checking:   { text: 'Checking…',    cls: 'checking',   warn: null },
+    valid:      { text: hasCount ? `● ${st.remaining} left today` : '● Active', cls: 'active', warn: null },
+    invalid:    { text: 'Invalid key',  cls: 'inactive',   warn: `Key not accepted: ${st.reason} Check it in Settings.` },
+    unverified: { text: 'Not verified', cls: 'unverified', warn: null },
+  };
+  const view  = views[st.state];
+  const badge = document.getElementById('key-status');
+  badge.textContent = view.text;
+  badge.className   = `key-status ${view.cls}`;
+  badge.title       = st.state === 'unverified' ? `Could not check the key: ${st.reason}` : '';
+  document.getElementById('no-key-warning').classList.toggle('hidden', !view.warn);
+  if (view.warn) document.getElementById('key-warning-text').textContent = view.warn;
+}
+
+// Keep the badge honest after each generation.
+async function noteKeyRejected(reason) {
+  const { licenseKey } = await loadStoredSettings();
+  const status = { key: (licenseKey || '').trim(), state: 'invalid', reason, checkedAt: Date.now() };
+  await storageSet({ keyStatus: status });
+  renderKeyStatus(status);
+}
+
+async function noteRemaining(remaining) {
+  if (remaining === undefined || remaining === null) return;
+  const { keyStatus } = await storageGet(['keyStatus']);
+  if (!keyStatus || keyStatus.state !== 'valid') return;
+  keyStatus.remaining = remaining;
+  await storageSet({ keyStatus });
+  renderKeyStatus(keyStatus);
+}
+
+function isKeyRejection(code) {
+  return code === 'http_401' || code === 'http_403';
 }
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
@@ -163,6 +223,7 @@ async function handleScrapeAndGenerate() {
     showCurrentStatus('Message ready.', 'success');
   } catch (err) {
     showCurrentStatus(err.message, 'error');
+    if (isKeyRejection(err.code)) noteKeyRejected(err.message);
   } finally {
     isGenerating = false;
     setButtonLoading('scrape-btn', 'btn-label', 'btn-spinner', false, 'Scrape &amp; Generate');
@@ -190,6 +251,7 @@ async function handleRegenerate() {
     showCurrentStatus('Regenerated!', 'success');
   } catch (err) {
     showCurrentStatus(err.message, 'error');
+    if (isKeyRejection(err.code)) noteKeyRejected(err.message);
   } finally {
     isGenerating = false;
     setButtonLoading('scrape-btn', 'btn-label', 'btn-spinner', false, 'Scrape &amp; Generate');
@@ -251,6 +313,7 @@ async function handleEnrich() {
       setLayerStatus(1, 'error', 'Error');
       setLayerStatus(2, 'error', 'Error');
       showCurrentStatus(response.error, 'error');
+      if (isKeyRejection(response.code)) noteKeyRejected(response.error);
       return;
     }
 
@@ -293,6 +356,7 @@ async function handleDeepGenerate() {
       if (response.status === 'error') {
         setLayerStatus(3, 'error', 'Error');
         showCurrentStatus(response.error, 'error');
+        if (isKeyRejection(response.code)) noteKeyRejected(response.error);
         return;
       }
 
@@ -300,6 +364,7 @@ async function handleDeepGenerate() {
       renderMessage(response.generatedMessage);
       const rem = response.remaining !== undefined ? ` (${response.remaining} messages left today)` : '';
       showCurrentStatus(`Message ready.${rem}`, 'success');
+      noteRemaining(response.remaining);
 
       await Cache.addContact({
         profileUrl: deepProfileJSON.profileUrl || '',
@@ -356,9 +421,8 @@ async function handleValidateKey() {
   btn.textContent = '…';
   btn.disabled = true;
 
-  const result = await new Promise(resolve => {
-    chrome.runtime.sendMessage({ type: 'VALIDATE_KEY', payload: { key } }, resolve);
-  });
+  const result = await validateKeyWithServer(key);
+  const status = toKeyStatus(key, result);
 
   btn.textContent = 'Verify';
   btn.disabled = false;
@@ -366,15 +430,15 @@ async function handleValidateKey() {
   const el = document.getElementById('key-validation-status');
   el.classList.remove('hidden');
 
-  if (result && result.valid) {
+  if (status.state === 'valid') {
     el.textContent = `✓ Valid key — ${result.remaining} messages remaining today`;
     el.className   = 'key-validation-status valid';
-    // Auto-save the key
+    // Auto-save the key, with the fresh status so the header needs no second check.
     const s = await loadStoredSettings();
-    await new Promise(resolve => chrome.storage.local.set({ ...s, licenseKey: key }, resolve));
+    await storageSet({ ...s, licenseKey: key, keyStatus: status });
     await checkLicenseStatus();
   } else {
-    el.textContent = `✗ ${result?.reason || 'Invalid key'}`;
+    el.textContent = `✗ ${status.reason}`;
     el.className   = 'key-validation-status invalid';
   }
 }
@@ -529,7 +593,12 @@ function sendToBackground(msg) {
     chrome.runtime.sendMessage(msg, (response) => {
       if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
       if (!response) { reject(new Error('No response from background.')); return; }
-      if (!response.success) { reject(new Error(response.error || 'Background returned an error.')); return; }
+      if (!response.success) {
+        const err = new Error(response.error || 'Background returned an error.');
+        err.code  = response.code;
+        reject(err);
+        return;
+      }
       if (response.data !== undefined) { resolve(response.data); return; }
       if (response.generatedMessage !== undefined) { resolve(response.generatedMessage); return; }
       reject(new Error('Unexpected response: ' + JSON.stringify(Object.keys(response))));
@@ -581,6 +650,14 @@ function loadStoredSettings() {
   return new Promise(resolve => {
     chrome.storage.local.get(['licenseKey','userName','userBio','resumeBase64','resumeFileName'], resolve);
   });
+}
+
+function storageGet(keys) {
+  return new Promise(resolve => chrome.storage.local.get(keys, resolve));
+}
+
+function storageSet(items) {
+  return new Promise(resolve => chrome.storage.local.set(items, resolve));
 }
 
 function esc(str) {

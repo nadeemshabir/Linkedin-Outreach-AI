@@ -705,8 +705,10 @@ body {
   margin-left: auto;
 }
 
-.key-status.active   { background: var(--success-bg); color: var(--success); }
-.key-status.inactive { background: var(--error-bg);   color: var(--error); }
+.key-status.active     { background: var(--success-bg); color: var(--success); }
+.key-status.inactive   { background: var(--error-bg);   color: var(--error); }
+.key-status.checking   { background: var(--bg);         color: var(--text-2); }
+.key-status.unverified { background: var(--warning-bg); color: var(--warning); }
 
 /* Settings note */
 .settings-note {

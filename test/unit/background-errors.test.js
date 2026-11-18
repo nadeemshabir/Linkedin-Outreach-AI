@@ -36,7 +36,7 @@ describe('server errors are shown in plain words (B8)', () => {
   it("keeps the server's own reason when it gives one", async () => {
     const { send } = setup(async () => json(403, { error: 'Invalid license key.' }));
     const res = await send(quick);
-    expect(res).toEqual({ success: false, error: 'Invalid license key.' });
+    expect(res).toEqual({ success: false, error: 'Invalid license key.', code: 'http_403' });
   });
 
   it('explains a network failure', async () => {
