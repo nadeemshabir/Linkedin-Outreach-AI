@@ -26,6 +26,8 @@ let currentChannel = 'note'; // where the message will be sent: 'note' | 'messag
 let linkedinPlan   = 'free'; // decides the note limit: 200 (free) or 300 (premium)
 let peekTimer      = null;
 let fitUndo        = null;   // { text, summary, ok } after "Fit to 200", until the next edit
+let myProfile      = null;   // your own LinkedIn profile, for common ground
+let sender         = {};     // your name and bio, for the message check
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -38,6 +40,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   wireRecentEvents();
   watchBrowser();
   await restoreChoices();
+  ({ myProfile = null } = await storageGet(['myProfile']));
+  sender = await storageGet(['userName', 'userBio']);
   await refreshActiveTab();
   await loadSettings();
   await renderRecentContacts();
@@ -205,6 +209,16 @@ function watchBrowser() {
     }
     if (area === 'local' && changes.keyStatus && changes.keyStatus.newValue) renderKeyStatus(changes.keyStatus.newValue);
     if (area === 'local' && changes.recentContacts) renderRecentContacts();
+    if (area === 'local' && changes.myProfile) {
+      myProfile = changes.myProfile.newValue || null;
+      renderMeStatus();
+      renderCommonGround();
+    }
+    if (area === 'local' && (changes.userName || changes.userBio)) {
+      if (changes.userName) sender.userName = changes.userName.newValue;
+      if (changes.userBio)  sender.userBio  = changes.userBio.newValue;
+      renderStrength();
+    }
   });
   // A run whose worker died stops sending heartbeats. Check now and then.
   setInterval(() => { if (job && RUNNING_STEPS.includes(job.step)) renderJob(); }, 10000);
@@ -222,12 +236,14 @@ async function refreshActiveTab() {
     shownMessageId = null;
     job            = key ? await loadJob(key) : null;
     if (key !== profileKey) return; // the user moved on while we were loading
+    document.getElementById('goal').value = (job && job.goal) || '';
     if (job) {
       if (job.channel) setChannel(job.channel);
       setMode(job.mode === 'deep' ? 'deep' : 'simple');
     }
   }
   renderJob();
+  renderMeStatus();
   if (key && !(job && job.profile)) peekActiveProfile(key);
 }
 
@@ -283,6 +299,10 @@ async function handleGenerate({ regenerate = false } = {}) {
       maxChars:    Limits.limitFor(currentChannel, linkedinPlan),
       messageType: document.getElementById('message-type').value,
       tone:        document.getElementById('tone').value,
+      goal:        document.getElementById('goal').value.trim(),
+      // Your picks among the "In common" chips. On a first run the
+      // background picks the strong ones itself, after reading the profile.
+      useCommonGround: regenerate && job ? job.useCommonGround : undefined,
       regenerate
     }
   });
@@ -381,6 +401,7 @@ function renderJob() {
   const person = (job && (job.profileJSON || job.profile)) || peek;
 
   if (profileKey && person) renderProfileCard(person); else hideProfileCard();
+  renderCommonGround();
   renderSteps(stale);
 
   if (job && job.enrichmentJSON) renderHooks(job.enrichmentJSON); else hideHooks();
@@ -465,6 +486,116 @@ function renderHooks(enrichmentJSON) {
 
 function hideHooks() { document.getElementById('hooks-panel').classList.add('hidden'); }
 
+// ─── Common ground ────────────────────────────────────────────────────────────
+// Found by the background right after it reads the profile. Tap a chip to
+// use it or skip it; "New version" then writes with your picks.
+const CG_ICONS = { school: '🎓', company: '💼', city: '📍', country: '📍', roots: '🇮🇳', skills: '🛠' };
+
+function renderCommonGround() {
+  const box   = document.getElementById('common-ground');
+  const tip   = document.getElementById('cg-tip');
+  const items = (job && job.profile && job.commonGround) || null;
+  tip.classList.toggle('hidden', !profileKey || !!myProfile);
+  box.classList.toggle('hidden', !profileKey || !myProfile || !items);
+  if (!items || !myProfile) return;
+
+  const chips = document.getElementById('cg-chips');
+  chips.innerHTML = '';
+  const picked = new Set(job.useCommonGround || []);
+  for (const item of items) {
+    const chip = document.createElement('button');
+    chip.className   = 'cg-chip';
+    chip.textContent = `${CG_ICONS[item.kind] || ''} ${item.label.replace(/^You (?:both|are both) /, '')}`.trim();
+    chip.title       = item.label;
+    chip.setAttribute('aria-pressed', String(picked.has(item.hook)));
+    chip.disabled    = isRunning(job);
+    chip.addEventListener('click', () => toggleCommonGround(item.hook));
+    chips.appendChild(chip);
+  }
+  document.getElementById('cg-none').classList.toggle('hidden', items.length > 0);
+}
+
+function toggleCommonGround(hook) {
+  if (!job || isRunning(job)) return;
+  const picked = new Set(job.useCommonGround || []);
+  if (picked.has(hook)) picked.delete(hook); else picked.add(hook);
+  job = { ...job, useCommonGround: [...picked] };
+  chrome.storage.session.set({ [`job:${profileKey}`]: job });
+  renderCommonGround();
+  renderStrength();
+}
+
+// ─── Message check ────────────────────────────────────────────────────────────
+function renderStrength() {
+  const box = document.getElementById('strength');
+  if (!job || !job.message) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+
+  const result = Strength.check(document.getElementById('generated-message').value, {
+    channel:      currentChannel,
+    limit:        Limits.limitFor(currentChannel, linkedinPlan),
+    them:         job.profileJSON ? { ...job.profile, ...job.profileJSON } : job.profile,
+    me:           myProfile,
+    bio:          sender.userBio,
+    senderName:   sender.userName,
+    hooks:        (job.enrichmentJSON && job.enrichmentJSON.topHooks) || [],
+    commonGround: job.useCommonGround || [],
+    goal:         job.goal
+  });
+
+  const score = document.getElementById('strength-score');
+  score.textContent = { strong: 'Strong', good: 'Good', weak: 'Needs work' }[result.score];
+  score.className   = `strength-score ${result.score}`;
+
+  const list = document.getElementById('strength-list');
+  list.innerHTML = '';
+  for (const c of result.checks) {
+    const li = document.createElement('li');
+    li.className   = c.ok ? 'ok' : c.warn ? 'warn' : 'fail';
+    li.textContent = c.label;
+    if (!c.ok && c.tip) {
+      const tip = document.createElement('span');
+      tip.className   = 'tip';
+      tip.textContent = c.tip;
+      li.appendChild(tip);
+    }
+    list.appendChild(li);
+  }
+}
+
+// ─── Your own profile (Settings) ──────────────────────────────────────────────
+function renderMeStatus() {
+  const status = document.getElementById('me-status');
+  const remove = document.getElementById('remove-me-btn');
+  const button = document.getElementById('import-me-btn');
+  button.disabled = !profileKey;
+  remove.classList.toggle('hidden', !myProfile);
+  if (!myProfile) {
+    status.textContent = 'Not added yet. Open your own LinkedIn profile, then click the button. It lets the extension find what you have in common with people.';
+    button.textContent = "Use the profile I'm on";
+    return;
+  }
+  const date = new Date(myProfile.importedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  status.innerHTML = '';
+  const name = document.createElement('strong');
+  name.textContent = myProfile.name || 'Your profile';
+  status.append(name, ` · added ${date}. Saved only on this device.`);
+  button.textContent = 'Update from the profile I\'m on';
+}
+
+async function handleImportMe() {
+  const button = document.getElementById('import-me-btn');
+  button.disabled    = true;
+  button.textContent = 'Reading…';
+  const res = await sendMessage({ type: 'IMPORT_MY_PROFILE', payload: { tabId: activeTabId } });
+  renderMeStatus();
+  showSettingsStatus(res && res.ok ? `Added: ${res.name}` : ((res && res.error) || 'Could not read the profile.'), res && res.ok ? 'success' : 'error');
+}
+
+async function handleRemoveMe() {
+  await new Promise(resolve => chrome.storage.local.remove('myProfile', resolve));
+}
+
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function wireSettingsEvents() {
   document.getElementById('save-settings-btn').addEventListener('click', handleSaveSettings);
@@ -472,6 +603,8 @@ function wireSettingsEvents() {
   document.getElementById('license-key').addEventListener('keydown', e => {
     if (e.key === 'Enter') handleValidateKey();
   });
+  document.getElementById('import-me-btn').addEventListener('click', handleImportMe);
+  document.getElementById('remove-me-btn').addEventListener('click', handleRemoveMe);
   // The plan changes the note limit, so it applies at once (no Save needed).
   document.getElementById('linkedin-plan').addEventListener('change', async (e) => {
     linkedinPlan = e.target.value === 'premium' ? 'premium' : 'free';
@@ -500,6 +633,7 @@ function wireSettingsEvents() {
 async function loadSettings() {
   const s = await loadStoredSettings();
   document.getElementById('linkedin-plan').value = linkedinPlan;
+  renderMeStatus();
   if (s.licenseKey) document.getElementById('license-key').value = s.licenseKey;
   if (s.userName)   document.getElementById('user-name').value   = s.userName;
   if (s.userBio)    document.getElementById('user-bio').value    = s.userBio;
@@ -591,6 +725,7 @@ function updateCharCount() {
   meter.textContent = st.hard ? `${st.count} / ${st.limit}` : `${st.count} chars · aim for under ${st.limit}`;
   meter.className   = `char-count${st.over ? ' over' : st.near ? ' near' : ''}`;
   renderFitRow(st);
+  renderStrength();
 }
 
 async function handleCopy() {

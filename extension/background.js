@@ -9,7 +9,7 @@
 // Each step is saved in chrome.storage.session, so closing the side panel
 // never loses work. The panel only draws the saved state.
 
-importScripts('utils/profile-url.js', 'utils/cache.js');
+importScripts('utils/profile-url.js', 'utils/common-ground.js', 'utils/cache.js');
 
 const SERVER_URL = 'https://linkedin-extention-production.up.railway.app';
 
@@ -46,6 +46,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'IMPORT_MY_PROFILE') {
+    importMyProfile(message.payload).then(sendResponse);
+    return true;
+  }
+
   if (message.type === 'VALIDATE_KEY') {
     handleValidateKey(message.payload, sendResponse);
     return true;
@@ -53,7 +58,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ─── Jobs ─────────────────────────────────────────────────────────────────────
-async function startJob({ tabId, mode, channel, maxChars, messageType, tone, regenerate = false }) {
+async function startJob({ tabId, mode, channel, maxChars, messageType, tone, goal, useCommonGround, regenerate = false }) {
   await ready;
   const tab        = await getTab(tabId);
   const profileKey = tab && ProfileUrl.key(tab.url);
@@ -74,6 +79,8 @@ async function startJob({ tabId, mode, channel, maxChars, messageType, tone, reg
     maxChars:       Number(maxChars) > 0 ? Number(maxChars) : null,
     messageType,
     tone,
+    goal:           String(goal || '').trim().slice(0, 200),
+    useCommonGround: Array.isArray(useCommonGround) ? useCommonGround : (prev ? prev.useCommonGround : null),
     step:           'reading',
     profile:        prev ? prev.profile : null,
     profileJSON:    prev ? prev.profileJSON : null,
@@ -103,16 +110,29 @@ async function startJob({ tabId, mode, channel, maxChars, messageType, tone, reg
 //     which the extension already sends back)
 // The panel's length meter and "Fit" button are the safety net either way.
 function outreachContext(job) {
-  return { channel: job.channel, maxChars: job.maxChars, format: formatHint(job) };
+  return {
+    channel:      job.channel,
+    maxChars:     job.maxChars,
+    commonGround: job.useCommonGround || [],
+    goal:         job.goal || '',
+    instructions: contextLines(job).join(' ')
+  };
 }
 
-function formatHint(job) {
-  if (!job.maxChars) return '';
-  // Models overshoot character counts, so ask for ~15% under the real limit.
-  const target = Math.floor(job.maxChars * 0.85);
-  return job.channel === 'note'
-    ? `[Message format: LinkedIn connection note. Keep it under ${target} characters (hard limit ${job.maxChars}, including spaces). No sign-off.]`
-    : `[Message format: LinkedIn message to a connection. Keep it under ${job.maxChars} characters.]`;
+function contextLines(job) {
+  const lines = [];
+  if (job.maxChars) {
+    // Models overshoot character counts, so ask for ~15% under the real limit.
+    const target = Math.floor(job.maxChars * 0.85);
+    lines.push(job.channel === 'note'
+      ? `[Message format: LinkedIn connection note. Keep it under ${target} characters (hard limit ${job.maxChars}, including spaces). No sign-off.]`
+      : `[Message format: LinkedIn message to a connection. Keep it under ${job.maxChars} characters.]`);
+  }
+  if (job.useCommonGround && job.useCommonGround.length) {
+    lines.push(`[Shared with the recipient, mention one naturally: ${job.useCommonGround.join('; ')}.]`);
+  }
+  if (job.goal) lines.push(`[Sender's goal: ${job.goal}]`);
+  return lines;
 }
 
 function firstStep(job) {
@@ -142,6 +162,15 @@ async function runJob(job, licenseKey) {
       job.profile = await scrapeTab(job.tabId, job.profileKey);
     }
 
+    // What you have in common (needs your own profile, added in Settings).
+    // On a first run, use the strong matches; after that, the user's picks.
+    const { myProfile } = await chrome.storage.local.get('myProfile');
+    job.commonGround = CommonGround.find(myProfile, job.profile);
+    const hooks = job.commonGround.map(c => c.hook);
+    job.useCommonGround = Array.isArray(job.useCommonGround)
+      ? job.useCommonGround.filter(h => hooks.includes(h))
+      : CommonGround.defaultPick(job.commonGround);
+
     const settings = await getSettings();
     let result;
 
@@ -157,7 +186,12 @@ async function runJob(job, licenseKey) {
       result = await callServer('/api/generate/deep', {
         key:            licenseKey,
         profileJSON:    job.profileJSON,
-        enrichmentJSON: { ...job.enrichmentJSON, outreachContext: outreachContext(job) },
+        enrichmentJSON: {
+          ...job.enrichmentJSON,
+          // Common ground goes first: it is the strongest hook there is.
+          topHooks: [...new Set([...(job.useCommonGround || []), ...((job.enrichmentJSON && job.enrichmentJSON.topHooks) || [])])],
+          outreachContext: outreachContext(job)
+        },
         messageType:    job.messageType,
         tone:           job.tone,
         resumeBase64:   settings.resumeBase64 || null
@@ -170,7 +204,7 @@ async function runJob(job, licenseKey) {
         messageType:  job.messageType,
         tone:         job.tone,
         userName:     settings.userName,
-        userBio:      [settings.userBio, formatHint(job)].filter(Boolean).join('\n\n'),
+        userBio:      [settings.userBio, contextLines(job).join('\n')].filter(Boolean).join('\n\n'),
         resumeBase64: settings.resumeBase64 || null
       }, TIMEOUT_MS.quick);
     }
@@ -261,6 +295,23 @@ async function peekProfile({ tabId }) {
     return await askContentScript(tabId, { action: 'peekProfile' });
   } catch (err) {
     return { success: false, error: err.message };
+  }
+}
+
+// Your own profile, read once from your LinkedIn page, for common ground.
+// Saved only in this browser (chrome.storage.local), never sent anywhere.
+async function importMyProfile({ tabId }) {
+  try {
+    const tab        = await getTab(tabId);
+    const profileKey = tab && ProfileUrl.key(tab.url);
+    if (!profileKey) return { ok: false, error: 'Open your own LinkedIn profile first.' };
+    const profile = await scrapeTab(tabId, profileKey);
+    await chrome.storage.local.set({
+      myProfile: { ...profile, profileUrl: ProfileUrl.canonical(profileKey), importedAt: Date.now() }
+    });
+    return { ok: true, name: profile.name };
+  } catch (err) {
+    return { ok: false, error: err.message };
   }
 }
 

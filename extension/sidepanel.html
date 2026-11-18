@@ -49,6 +49,13 @@
         </div>
       </div>
 
+      <div class="common-ground hidden" id="common-ground">
+        <div class="cg-label">In common <span class="cg-hint">· tap to use or skip</span></div>
+        <div class="cg-chips" id="cg-chips"></div>
+        <p class="cg-none hidden" id="cg-none">No shared school, company or city found.</p>
+      </div>
+      <p class="cg-tip hidden" id="cg-tip">Tip: add your own LinkedIn profile in Settings, and the extension will find what you have in common.</p>
+
       <div class="field-group full channel-group">
         <span class="field-label" id="channel-label">Send as</span>
         <div class="mode-toggle" role="radiogroup" aria-labelledby="channel-label">
@@ -80,6 +87,12 @@
             </select>
           </div>
         </div>
+      </div>
+
+      <div class="field-group full goal-group">
+        <label class="field-label" for="goal">Goal <span class="optional">(optional)</span></label>
+        <input id="goal" type="text" class="field-input" maxlength="200" autocomplete="off"
+          placeholder="e.g. Referral for the Data Analyst role at Spotify" />
       </div>
 
       <div class="mode-toggle" role="radiogroup" aria-label="Mode">
@@ -134,6 +147,13 @@
           <span id="fit-text"></span>
           <button class="btn-link" id="fit-btn"></button>
           <button class="btn-link hidden" id="undo-fit-btn">Undo</button>
+        </div>
+        <div class="strength" id="strength">
+          <div class="strength-head">
+            <span>Message check</span>
+            <span class="strength-score" id="strength-score"></span>
+          </div>
+          <ul class="strength-list" id="strength-list" aria-live="polite"></ul>
         </div>
         <div class="action-row">
           <button id="regenerate-btn" class="btn btn-secondary" title="Rewrite the message. Reuses what was already found, so it is quick.">
@@ -200,6 +220,17 @@
         </div>
 
         <div class="field-group full">
+          <span class="field-label">Your LinkedIn profile</span>
+          <div class="me-box">
+            <div class="me-status" id="me-status">Not added yet. Open your own LinkedIn profile, then click the button. It lets the extension find what you have in common with people.</div>
+            <div class="me-actions">
+              <button class="btn btn-sm btn-secondary" id="import-me-btn">Use the profile I'm on</button>
+              <button class="btn-link hidden" id="remove-me-btn">Remove</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="field-group full">
           <label class="field-label" for="user-name">Your Name</label>
           <input id="user-name" type="text" class="field-input" placeholder="Jane Smith" autocomplete="off" />
         </div>
@@ -234,6 +265,8 @@
 
   <script src="utils/profile-url.js"></script>
   <script src="utils/limits.js"></script>
+  <script src="utils/strength.js"></script>
+  <script src="utils/common-ground.js"></script>
   <script src="utils/cache.js"></script>
   <script src="sidepanel.js"></script>
 </body>
