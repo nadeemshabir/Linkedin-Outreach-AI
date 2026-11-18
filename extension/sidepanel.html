@@ -23,7 +23,7 @@
 
     <nav class="tab-nav" role="tablist" aria-label="Sections">
       <button class="tab-btn active" data-tab="current"  id="tabbtn-current"  role="tab" aria-selected="true"  aria-controls="tab-current">CURRENT</button>
-      <button class="tab-btn"        data-tab="recent"   id="tabbtn-recent"   role="tab" aria-selected="false" aria-controls="tab-recent">RECENT</button>
+      <button class="tab-btn"        data-tab="recent"   id="tabbtn-recent"   role="tab" aria-selected="false" aria-controls="tab-recent">TRACKER<span class="tab-count hidden" id="due-count"></span></button>
       <button class="tab-btn"        data-tab="settings" id="tabbtn-settings" role="tab" aria-selected="false" aria-controls="tab-settings">SETTINGS</button>
     </nav>
 
@@ -47,6 +47,15 @@
           <div class="profile-headline" id="profile-headline"></div>
           <div class="profile-company" id="profile-company"></div>
         </div>
+      </div>
+
+      <!-- Shown when you already wrote to this person (also a duplicate warning). -->
+      <div class="tracked hidden" id="tracked-banner">
+        <div class="tracked-row">
+          <span id="tracked-text"></span>
+          <select id="tracked-status" class="status-select" aria-label="Status"></select>
+        </div>
+        <div class="tracked-next hidden" id="tracked-next"></div>
       </div>
 
       <div class="common-ground hidden" id="common-ground">
@@ -148,6 +157,10 @@
           <button class="btn-link" id="fit-btn"></button>
           <button class="btn-link hidden" id="undo-fit-btn">Undo</button>
         </div>
+        <div class="sent-prompt hidden" id="sent-prompt">
+          <span>Copied. Once you send it on LinkedIn:</span>
+          <button class="btn btn-sm btn-primary" id="mark-sent-btn">Mark as sent</button>
+        </div>
         <div class="strength" id="strength">
           <div class="strength-head">
             <span>Message check</span>
@@ -179,17 +192,33 @@
 
     </section>
 
-    <!-- ── RECENT tab ── -->
+    <!-- ── TRACKER tab (was: Recent) ── -->
     <section class="tab-content" id="tab-recent" role="tabpanel" aria-labelledby="tabbtn-recent">
-      <div class="recent-header hidden" id="recent-actions">
-        <span class="recent-subtitle">Last 5 contacts</span>
-        <button class="btn-ghost" id="clear-recent-btn">Clear all</button>
+      <div class="tracker-stats hidden" id="tracker-stats"></div>
+
+      <div class="tracker-due hidden" id="tracker-due">
+        <div class="section-label">Due now</div>
+        <div id="due-list"></div>
       </div>
+
+      <div class="tracker-filters hidden" id="tracker-filters" role="radiogroup" aria-label="Show">
+        <button class="filter-btn active" data-filter="all"       role="radio" aria-checked="true">All</button>
+        <button class="filter-btn"        data-filter="drafted"   role="radio" aria-checked="false">Drafted</button>
+        <button class="filter-btn"        data-filter="sent"      role="radio" aria-checked="false">Sent</button>
+        <button class="filter-btn"        data-filter="connected" role="radio" aria-checked="false">Connected</button>
+        <button class="filter-btn"        data-filter="replied"   role="radio" aria-checked="false">Replied</button>
+      </div>
+
       <div id="recent-list"></div>
       <div class="empty-state" id="no-recent">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        <p>No recent contacts yet.</p>
-        <p class="empty-hint">Generate a message on a LinkedIn profile to see it here.</p>
+        <p>No one tracked yet.</p>
+        <p class="empty-hint">Generate a message on a LinkedIn profile, and the person shows up here with what to do next.</p>
+      </div>
+
+      <div class="recent-header hidden" id="recent-actions">
+        <button class="btn-link" id="export-csv-btn">Export CSV</button>
+        <button class="btn-ghost" id="clear-recent-btn">Clear all</button>
       </div>
     </section>
 
@@ -267,7 +296,7 @@
   <script src="utils/limits.js"></script>
   <script src="utils/strength.js"></script>
   <script src="utils/common-ground.js"></script>
-  <script src="utils/cache.js"></script>
+  <script src="utils/tracker.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

@@ -9,7 +9,7 @@
 // Each step is saved in chrome.storage.session, so closing the side panel
 // never loses work. The panel only draws the saved state.
 
-importScripts('utils/profile-url.js', 'utils/common-ground.js', 'utils/cache.js');
+importScripts('utils/profile-url.js', 'utils/common-ground.js', 'utils/tracker.js');
 
 const SERVER_URL = 'https://linkedin-extention-production.up.railway.app';
 
@@ -32,6 +32,24 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
 // A job that was running when Chrome stopped this worker can never finish.
 // Mark it, so the panel offers "try again" instead of spinning forever.
 const ready = markInterruptedJobs();
+
+// ─── Follow-up badge ──────────────────────────────────────────────────────────
+// The toolbar icon shows how many follow-ups are due ("Aoife accepted, now
+// send your message"). Re-checked hourly, since "due" depends on time.
+chrome.alarms.get('followups').then(a => a || chrome.alarms.create('followups', { periodInMinutes: 60 }));
+chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'followups') updateBadge(); });
+chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.contacts) updateBadge(); });
+chrome.runtime.onInstalled.addListener(() => { Tracker.all().then(updateBadge); }); // moves v3's Recent over
+updateBadge();
+
+async function updateBadge() {
+  try {
+    const n = Tracker.due(await Tracker.list()).length;
+    await chrome.action.setBadgeText({ text: n ? String(n) : '' });
+    if (n) await chrome.action.setBadgeBackgroundColor({ color: '#1A56DB' });
+    await chrome.action.setTitle({ title: n ? `LinkedIn Outreach AI · ${n} follow-up${n === 1 ? '' : 's'} due` : 'LinkedIn Outreach AI' });
+  } catch (_) { /* the badge is a nice-to-have */ }
+}
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -214,7 +232,7 @@ async function runJob(job, licenseKey) {
     job.messageId = Date.now();
     job.remaining = result.remaining;
     // Bookkeeping first, so "done" really means done.
-    await saveToRecent(job).catch(() => {});
+    await saveToTracker(job).catch(() => {});
     await noteRemaining(result.remaining).catch(() => {});
     job.step       = 'done';
     job.finishedAt = Date.now();
@@ -262,16 +280,19 @@ async function markInterruptedJobs() {
   if (Object.keys(updates).length) await chrome.storage.session.set(updates);
 }
 
-// The side panel's Recent tab, saved here so it happens even if the panel is closed.
-async function saveToRecent(job) {
+// Saved here, not in the panel, so it happens even if the panel is closed.
+async function saveToTracker(job) {
   const p = job.profileJSON || job.profile || {};
-  await Cache.addContact({
-    profileUrl: job.profileUrl,
-    name:       p.name || (job.profile && job.profile.name) || 'Unknown',
-    headline:   p.headline || '',
-    company:    p.currentCompany || '',
-    message:    job.message,
-    timestamp:  Date.now()
+  await Tracker.saveDraft({
+    profileKey:  job.profileKey,
+    profileUrl:  job.profileUrl,
+    name:        p.name || (job.profile && job.profile.name) || 'Unknown',
+    headline:    p.headline || '',
+    company:     p.currentCompany || '',
+    message:     job.message,
+    channel:     job.channel,
+    messageType: job.messageType,
+    tone:        job.tone
   });
 }
 

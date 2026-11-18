@@ -84,6 +84,8 @@ export function createFakeChrome({ local = {}, session = {}, tabs = [] } = {}) {
         return { ...tab };
       }),
       sendMessage: vi.fn(),
+      update: vi.fn(async () => {}),
+      create: vi.fn(async () => {}),
       onUpdated: makeEvent(),
       onActivated: makeEvent(),
       onRemoved: makeEvent(),
@@ -102,6 +104,7 @@ export function createFakeChrome({ local = {}, session = {}, tabs = [] } = {}) {
     },
     alarms: {
       create: vi.fn(),
+      get: vi.fn(async () => undefined),
       clear: vi.fn(async () => true),
       onAlarm: makeEvent(),
     },

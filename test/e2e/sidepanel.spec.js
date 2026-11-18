@@ -89,7 +89,6 @@ test('closing the panel mid-run does not lose the message', async ({ context, ex
   panel = await openPanel(context, extensionId);
   await linkedin.bringToFront(); // back on the profile
   await expect(panel.locator('#generated-message')).toHaveValue(/^Hi Aoife/);
-  await expect(panel.locator('#tab-recent')).toBeAttached();
-  const recent = await panel.evaluate(async () => (await chrome.storage.local.get('recentContacts')).recentContacts);
-  expect(recent[0]).toMatchObject({ name: 'Aoife Murphy', profileUrl: 'https://www.linkedin.com/in/aoife-test/' });
+  const { contacts } = await panel.evaluate(() => chrome.storage.local.get('contacts'));
+  expect(contacts['/in/aoife-test/']).toMatchObject({ name: 'Aoife Murphy', status: 'drafted', profileUrl: 'https://www.linkedin.com/in/aoife-test/' });
 });

@@ -90,5 +90,25 @@ await panel.locator('#generate-label', { hasText: 'Generate message' }).waitFor(
 await panel.setViewportSize({ width: 400, height: 1500 });
 await panel.screenshot({ path: path.join(OUT, 'panel-6-deep-done.png') });
 
+// The tracker, with a few people at different stages (example data).
+const day = 24 * 60 * 60 * 1000;
+const t = Date.now();
+const person = (slug, name, headline, status, extra = {}) => ({
+  profileKey: `/in/${slug}/`, profileUrl: `https://www.linkedin.com/in/${slug}/`, name, headline,
+  message: `Hi ${name.split(' ')[0]}, fellow Trinity grad here. Open to a quick chat about your team?`,
+  channel: 'note', messageType: 'Referral', tone: 'Casual', status, createdAt: t - 9 * day, updatedAt: t - day, history: [], ...extra,
+});
+await panel.evaluate((contacts) => chrome.storage.local.set({ contacts }), {
+  '/in/aoife-test/': person('aoife-test', 'Aoife Murphy', 'Senior Data Scientist at Spotify', 'connected', { connectedAt: t - day }),
+  '/in/liam/':  person('liam', 'Liam Byrne', 'Engineering Manager at Stripe', 'sent', { channel: 'message', sentAt: t - 6 * day }),
+  '/in/priya/': person('priya', 'Priya Nair', 'ML Engineer at Zalando', 'replied', { sentAt: t - 8 * day, repliedAt: t - 2 * day }),
+  '/in/sean/':  person('sean', "Seán O'Brien", 'Recruiter at Workday', 'replied', { sentAt: t - 7 * day, repliedAt: t - 3 * day }),
+  '/in/maria/': person('maria', 'Maria Rossi', 'Data Analyst at Google', 'sent', { sentAt: t - 3 * day }),
+});
+await panel.setViewportSize({ width: 400, height: 1300 });
+await panel.click('#tabbtn-recent');
+await panel.locator('#due-list .contact-card').first().waitFor();
+await panel.screenshot({ path: path.join(OUT, 'panel-7-tracker.png') });
+
 await context.close();
 console.log(`Saved screenshots to ${OUT}`);

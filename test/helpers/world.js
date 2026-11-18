@@ -28,9 +28,10 @@ const abortError = () => Object.assign(new Error('The operation was aborted.'), 
  * @param {object}   [o.session]  initial chrome.storage.session
  * @param {Array}    [o.tabs]     [{ id, url, active }]
  * @param {object}   [o.pages]    tabId → profile the content script returns
+ * @param {object}   [o.pagesByUrl] url → profile, used when a tab navigates there
  * @param {Function} [o.server]   (path, body) → [status, json] | Response | 'hang'
  */
-export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, server = () => [404, {}] } = {}) {
+export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, pagesByUrl = {}, server = () => [404, {}] } = {}) {
   const { chrome, dispatchMessage } = createFakeChrome({ local, session, tabs });
 
   chrome.tabs.query.mockImplementation(async (q = {}) =>
@@ -73,6 +74,15 @@ export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, s
     chrome, fetch, setTimeout, clearTimeout, setInterval, clearInterval, AbortController, Response,
   });
 
+  function navigate(tabId, url, page) {
+    const tab = tabs.find((t) => t.id === tabId);
+    tab.url = url;
+    pages[tabId] = page || pagesByUrl[url] || pages[tabId];
+    chrome.tabs.onUpdated.fns.forEach((fn) => fn(tabId, { url }, { ...tab }));
+  }
+  // chrome.tabs.update({ url }) navigates the tab, as in Chrome.
+  chrome.tabs.update.mockImplementation(async (tabId, { url } = {}) => { if (url) navigate(tabId, url); });
+
   return {
     chrome,
     fetch,
@@ -85,18 +95,15 @@ export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, s
       chrome.tabs.onActivated.fns.forEach((fn) => fn({ tabId }));
     },
     /** LinkedIn moves to another page inside the same tab, without a reload. */
-    navigate(tabId, url, page) {
-      const tab = tabs.find((t) => t.id === tabId);
-      tab.url = url;
-      if (page) pages[tabId] = page;
-      chrome.tabs.onUpdated.fns.forEach((fn) => fn(tabId, { url }, { ...tab }));
-    },
+    navigate,
     async job(profileKey) {
       const id = `job:${profileKey}`;
       return (await chrome.storage.session.get(id))[id] || null;
     },
+    /** Everyone in the tracker, most recent first. */
     async recent() {
-      return (await chrome.storage.local.get('recentContacts')).recentContacts || [];
+      const { contacts = {} } = await chrome.storage.local.get('contacts');
+      return Object.values(contacts).sort((a, b) => b.updatedAt - a.updatedAt);
     },
     /** Start a job straight from the background, with no panel open. */
     start(payload) {

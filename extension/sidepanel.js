@@ -28,6 +28,8 @@ let peekTimer      = null;
 let fitUndo        = null;   // { text, summary, ok } after "Fit to 200", until the next edit
 let myProfile      = null;   // your own LinkedIn profile, for common ground
 let sender         = {};     // your name and bio, for the message check
+let contact        = null;   // this person's entry in your tracker, if any
+let trackerFilter  = 'all';
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -44,7 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   sender = await storageGet(['userName', 'userBio']);
   await refreshActiveTab();
   await loadSettings();
-  await renderRecentContacts();
+  await renderTracker();
   await checkLicenseStatus();
 });
 
@@ -119,7 +121,7 @@ function switchTab(name) {
     b.setAttribute('aria-selected', String(on));
   });
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${name}`));
-  if (name === 'recent') renderRecentContacts();
+  if (name === 'recent') renderTracker();
 }
 
 // ─── Mode toggle ──────────────────────────────────────────────────────────────
@@ -208,7 +210,7 @@ function watchBrowser() {
       renderJob();
     }
     if (area === 'local' && changes.keyStatus && changes.keyStatus.newValue) renderKeyStatus(changes.keyStatus.newValue);
-    if (area === 'local' && changes.recentContacts) renderRecentContacts();
+    if (area === 'local' && changes.contacts) onContactsChanged(changes.contacts.newValue || {});
     if (area === 'local' && changes.myProfile) {
       myProfile = changes.myProfile.newValue || null;
       renderMeStatus();
@@ -237,14 +239,29 @@ async function refreshActiveTab() {
     job            = key ? await loadJob(key) : null;
     if (key !== profileKey) return; // the user moved on while we were loading
     document.getElementById('goal').value = (job && job.goal) || '';
+    document.getElementById('sent-prompt').classList.add('hidden');
+    contact = key ? await Tracker.find(key) : null;
     if (job) {
       if (job.channel) setChannel(job.channel);
       setMode(job.mode === 'deep' ? 'deep' : 'simple');
     }
   }
   renderJob();
+  renderTrackedBanner();
   renderMeStatus();
   if (key && !(job && job.profile)) peekActiveProfile(key);
+  if (key) await applyIntent(key);
+}
+
+// "Write it" in the tracker opens the person's profile and leaves a note
+// here, so the panel is ready for the follow-up when the page arrives.
+async function applyIntent(key) {
+  const { intent } = await chrome.storage.session.get('intent');
+  if (!intent || intent.profileKey !== key) return;
+  await chrome.storage.session.remove('intent');
+  setChannel(intent.channel || 'message');
+  document.getElementById('goal').value = intent.goal || '';
+  showCurrentStatus('Ready for your next message. Check the goal, then press Generate.', 'success');
 }
 
 async function loadJob(key) {
@@ -271,6 +288,10 @@ function wireCurrentEvents() {
   document.getElementById('copy-btn').addEventListener('click', handleCopy);
   document.getElementById('fit-btn').addEventListener('click', handleFit);
   document.getElementById('undo-fit-btn').addEventListener('click', handleUndoFit);
+  document.getElementById('mark-sent-btn').addEventListener('click', handleMarkSent);
+  document.getElementById('tracked-status').addEventListener('change', (e) => {
+    if (profileKey) Tracker.setStatus(profileKey, e.target.value);
+  });
   document.getElementById('generated-message').addEventListener('input', () => {
     fitUndo = null; // a real edit ends the "just shortened" state
     handleMessageEdited();
@@ -321,7 +342,7 @@ function handleMessageEdited() {
   const text = document.getElementById('generated-message').value;
   job = { ...job, editedMessage: text };
   chrome.storage.session.set({ [`job:${profileKey}`]: job });
-  Cache.updateMessage(job.profileUrl, text);
+  Tracker.updateMessage(profileKey, text);
 }
 
 // ─── Make it fit ──────────────────────────────────────────────────────────────
@@ -410,6 +431,7 @@ function renderJob() {
     if (shownMessageId !== job.messageId) {
       shownMessageId = job.messageId;
       fitUndo = null;
+      document.getElementById('sent-prompt').classList.add('hidden');
       renderMessage(job.editedMessage != null ? job.editedMessage : job.message);
     }
   } else {
@@ -736,6 +758,8 @@ async function handleCopy() {
     ta.select(); document.execCommand('copy');
   }
   recordNoteUsed();
+  // Nudge to keep the tracker honest: copying is not sending.
+  if (contact && contact.status === 'drafted') document.getElementById('sent-prompt').classList.remove('hidden');
   const btn = document.getElementById('copy-btn');
   btn.textContent = '✓ Copied!';
   btn.classList.add('btn-secondary'); btn.classList.remove('btn-primary');
@@ -766,62 +790,198 @@ function showSettingsStatus(msg, type = '') {
   setTimeout(() => el.classList.add('hidden'), 2500);
 }
 
-// ─── Recent contacts ──────────────────────────────────────────────────────────
+// ─── Tracker ──────────────────────────────────────────────────────────────────
+// Everyone you wrote to, their status, and what to do next.
 function wireRecentEvents() {
-  document.getElementById('clear-recent-btn').addEventListener('click', async () => {
-    await Cache.clearContacts();
-    renderRecentContacts();
+  armTwoClick(document.getElementById('clear-recent-btn'), 'Click again to delete everyone', async () => {
+    await Tracker.clear();
   });
+  document.getElementById('export-csv-btn').addEventListener('click', handleExportCsv);
+  document.querySelectorAll('.filter-btn').forEach(btn => btn.addEventListener('click', () => {
+    trackerFilter = btn.dataset.filter;
+    document.querySelectorAll('.filter-btn').forEach(b => {
+      b.classList.toggle('active', b === btn);
+      b.setAttribute('aria-checked', String(b === btn));
+    });
+    renderTracker();
+  }));
 }
 
-async function renderRecentContacts() {
-  const contacts  = await Cache.getContacts();
-  const listEl    = document.getElementById('recent-list');
-  const emptyEl   = document.getElementById('no-recent');
-  const actionsEl = document.getElementById('recent-actions');
+async function onContactsChanged(all) {
+  contact = profileKey ? (all[profileKey] || null) : null;
+  renderTrackedBanner();
+  renderTracker();
+}
+
+async function renderTracker() {
+  const contacts = await Tracker.list();
+  const now      = Date.now();
+  const dueNow   = Tracker.due(contacts, now);
+
+  const count = document.getElementById('due-count');
+  count.textContent = dueNow.length ? String(dueNow.length) : '';
+  count.classList.toggle('hidden', !dueNow.length);
+
+  renderTrackerStats(Tracker.stats(contacts));
+
+  const dueList = document.getElementById('due-list');
+  dueList.innerHTML = '';
+  dueNow.forEach(c => dueList.appendChild(buildContactCard(c, now)));
+  document.getElementById('tracker-due').classList.toggle('hidden', !dueNow.length);
+
+  const listEl = document.getElementById('recent-list');
   listEl.innerHTML = '';
-  if (contacts.length === 0) {
-    emptyEl.classList.remove('hidden'); actionsEl.classList.add('hidden'); return;
-  }
-  emptyEl.classList.add('hidden'); actionsEl.classList.remove('hidden');
-  contacts.forEach((c, i) => listEl.appendChild(buildContactCard(c, i)));
+  contacts
+    .filter(c => trackerFilter === 'all' ? !dueNow.includes(c) : c.status === trackerFilter)
+    .forEach(c => listEl.appendChild(buildContactCard(c, now)));
+
+  document.getElementById('no-recent').classList.toggle('hidden', contacts.length > 0);
+  document.getElementById('recent-actions').classList.toggle('hidden', !contacts.length);
+  document.getElementById('tracker-filters').classList.toggle('hidden', !contacts.length);
 }
 
-function buildContactCard(contact, idx) {
-  const card = document.createElement('div');
+function renderTrackerStats(st) {
+  const el = document.getElementById('tracker-stats');
+  el.classList.toggle('hidden', !st.contacted);
+  if (!st.contacted) return;
+  const parts = [`<strong>${st.contacted}</strong> contacted`];
+  if (st.acceptRate !== null) parts.push(`<strong>${st.acceptRate}%</strong> accepted`);
+  if (st.replyRate !== null)  parts.push(`<strong>${st.replyRate}%</strong> replied`);
+  el.innerHTML = parts.join(' · ') + (st.best
+    ? `<br>Working best for you: <strong>${esc(st.best.name)}</strong> (${st.best.replied} of ${st.best.sent} replied)`
+    : '');
+}
+
+function buildContactCard(c, now) {
+  const card    = document.createElement('div');
   card.className = 'contact-card';
-  const date    = new Date(contact.timestamp).toLocaleDateString('en-US', { month:'short', day:'numeric' });
-  const preview = (contact.message || '').substring(0, 110) + ((contact.message || '').length > 110 ? '…' : '');
+  const step    = Tracker.nextStep(c, now);
+  const message = c.message || '';
+  const preview = message.substring(0, 110) + (message.length > 110 ? '…' : '');
   card.innerHTML = `
     <div class="contact-header">
       <div class="contact-info">
-        <div class="contact-name">${esc(contact.name||'Unknown')}</div>
-        <div class="contact-meta">${esc(contact.headline||contact.company||'')}</div>
+        <div class="contact-name">${esc(c.name || 'Unknown')}</div>
+        <div class="contact-meta">${esc(statusDate(c))}${c.headline || c.company ? ' · ' + esc(c.headline || c.company) : ''}</div>
       </div>
-      <div class="contact-date">${esc(date)}</div>
+      <select class="status-select" aria-label="Status for ${esc(c.name || 'this person')}">${statusOptions(c.status)}</select>
     </div>
-    <div class="contact-message-preview" id="prev-${idx}">${esc(preview)}</div>
-    <div class="contact-message-full hidden" id="full-${idx}">${esc(contact.message||'')}</div>
+    <div class="contact-next hidden"><span class="next-text"></span><button class="btn btn-sm btn-primary next-btn"></button></div>
+    <div class="contact-message-preview">${esc(preview)}</div>
+    <div class="contact-message-full hidden">${esc(message)}</div>
     <div class="contact-actions">
-      <button class="btn-link" id="expand-${idx}">Show full message</button>
-      <button class="btn btn-sm btn-primary" id="copy-c-${idx}">Copy</button>
+      <div class="contact-buttons">
+        <button class="btn-link expand-btn">Show full message</button>
+        <button class="btn-link open-btn">Open profile</button>
+        <button class="btn-link remove-btn">Remove</button>
+      </div>
+      <button class="btn btn-sm btn-secondary copy-btn">Copy</button>
     </div>`;
 
-  card.querySelector(`#expand-${idx}`).addEventListener('click', () => {
-    const isHidden = card.querySelector(`#full-${idx}`).classList.contains('hidden');
-    card.querySelector(`#prev-${idx}`).classList.toggle('hidden', isHidden);
-    card.querySelector(`#full-${idx}`).classList.toggle('hidden', !isHidden);
-    card.querySelector(`#expand-${idx}`).textContent = isHidden ? 'Show less' : 'Show full message';
-  });
+  if (step) {
+    const next = card.querySelector('.contact-next');
+    next.classList.remove('hidden');
+    next.querySelector('.next-text').textContent = step.label;
+    const btn = next.querySelector('.next-btn');
+    if (step.kind === 'message' || step.kind === 'followup') {
+      btn.textContent = step.kind === 'message' ? 'Write the message' : 'Write a follow-up';
+      btn.addEventListener('click', () => startNextMessage(c, step));
+    } else {
+      btn.remove();
+    }
+  }
 
-  card.querySelector(`#copy-c-${idx}`).addEventListener('click', async () => {
-    await navigator.clipboard.writeText(contact.message || '').catch(() => {});
-    const btn = card.querySelector(`#copy-c-${idx}`);
-    btn.textContent = 'Copied!';
-    setTimeout(() => { btn.textContent = 'Copy'; }, 2200);
+  card.querySelector('.status-select').addEventListener('change', (e) => Tracker.setStatus(c.profileKey, e.target.value));
+  card.querySelector('.expand-btn').addEventListener('click', (e) => {
+    const full = card.querySelector('.contact-message-full');
+    const show = full.classList.contains('hidden');
+    full.classList.toggle('hidden', !show);
+    card.querySelector('.contact-message-preview').classList.toggle('hidden', show);
+    e.target.textContent = show ? 'Show less' : 'Show full message';
   });
-
+  card.querySelector('.open-btn').addEventListener('click', () => openProfile(c.profileUrl));
+  armTwoClick(card.querySelector('.remove-btn'), 'Sure? Click again', () => Tracker.remove(c.profileKey));
+  card.querySelector('.copy-btn').addEventListener('click', async (e) => {
+    await navigator.clipboard.writeText(message).catch(() => {});
+    e.target.textContent = 'Copied!';
+    setTimeout(() => { e.target.textContent = 'Copy'; }, 2200);
+  });
   return card;
+}
+
+function statusOptions(current) {
+  return Tracker.STATUSES
+    .map(s => `<option value="${s}"${s === current ? ' selected' : ''}>${Tracker.STATUS_LABEL[s]}</option>`)
+    .join('');
+}
+
+function statusDate(c) {
+  const at = { drafted: c.createdAt, sent: c.sentAt, connected: c.connectedAt, replied: c.repliedAt }[c.status] || c.updatedAt;
+  return `${Tracker.STATUS_LABEL[c.status] || c.status} ${new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+}
+
+// "Write the message" / "Write a follow-up": open their profile, ready to go.
+async function startNextMessage(c, step) {
+  const goal = step.kind === 'followup'
+    ? 'Polite follow-up: they have not replied to my last message yet. Keep it short and easy to answer.'
+    : 'They just accepted my connection request. Thank them in a few words, then make my ask.';
+  await chrome.storage.session.set({ intent: { profileKey: c.profileKey, channel: 'message', goal } });
+  await openProfile(c.profileUrl);
+  switchTab('current');
+}
+
+async function openProfile(url) {
+  if (activeTabId !== null) await chrome.tabs.update(activeTabId, { url });
+  else await chrome.tabs.create({ url });
+}
+
+// A destructive button asks once more before acting (no blocking popups).
+function armTwoClick(btn, confirmText, action) {
+  const original = btn.textContent;
+  let armed = false;
+  btn.addEventListener('click', async () => {
+    if (!armed) {
+      armed = true;
+      btn.textContent = confirmText;
+      setTimeout(() => { armed = false; btn.textContent = original; }, 3000);
+      return;
+    }
+    armed = false;
+    btn.textContent = original;
+    await action();
+  });
+}
+
+async function handleExportCsv() {
+  const csv  = Tracker.toCSV(await Tracker.list());
+  const url  = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href     = url;
+  link.download = `linkedin-outreach-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ─── This person, on the Current tab ──────────────────────────────────────────
+// "In your tracker · Sent 12 Nov" also warns you before writing twice.
+function renderTrackedBanner() {
+  const box = document.getElementById('tracked-banner');
+  if (!profileKey || !contact) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  document.getElementById('tracked-text').textContent = `In your tracker · ${statusDate(contact)}`;
+  document.getElementById('tracked-status').innerHTML = statusOptions(contact.status);
+  const step = Tracker.nextStep(contact);
+  const next = document.getElementById('tracked-next');
+  next.classList.toggle('hidden', !step);
+  if (step) next.textContent = step.label;
+  if (contact.status !== 'drafted') document.getElementById('sent-prompt').classList.add('hidden');
+}
+
+async function handleMarkSent() {
+  document.getElementById('sent-prompt').classList.add('hidden');
+  if (profileKey) await Tracker.setStatus(profileKey, 'sent');
 }
 
 // ─── Chrome messaging ─────────────────────────────────────────────────────────
