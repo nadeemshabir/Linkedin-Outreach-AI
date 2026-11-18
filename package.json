@@ -1,0 +1,23 @@
+{
+  "name": "linkedin-outreach-ai",
+  "version": "4.0.0",
+  "private": true,
+  "description": "Dev tooling for the LinkedIn Outreach AI Chrome extension. The extension itself lives in extension/.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "bench": "node scripts/bench-scraper.mjs",
+    "dev": "node dev/serve.mjs",
+    "zip": "node scripts/package.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "happy-dom": "^21.0.4",
+    "vitest": "^5.1.1"
+  }
+}
