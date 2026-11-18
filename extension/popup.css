@@ -35,7 +35,7 @@ body {
   color: var(--text);
   width: 400px;
   min-height: 480px;
-  max-height: 620px;
+  max-height: 600px; /* Chrome's hard limit for popups */
   overflow: hidden;
   display: flex;
   flex-direction: column;
