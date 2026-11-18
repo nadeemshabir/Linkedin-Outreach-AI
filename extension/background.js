@@ -36,23 +36,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleDeepGenerate(message.payload, sendResponse);
     return true;
   }
-
-  if (message.type === 'SAVE_RECENT') {
-    chrome.storage.local.get(['recentContacts'], (result) => {
-      const recent  = result.recentContacts || [];
-      const updated = [message.payload, ...recent.filter(c => c.profileUrl !== message.payload.profileUrl)].slice(0, 5);
-      chrome.storage.local.set({ recentContacts: updated });
-      sendResponse({ status: 'saved' });
-    });
-    return true;
-  }
-
-  if (message.type === 'GET_RECENT') {
-    chrome.storage.local.get(['recentContacts'], (result) => {
-      sendResponse({ contacts: result.recentContacts || [] });
-    });
-    return true;
-  }
 });
 
 // ─── Scrape profile from active tab ───────────────────────────────────────────
