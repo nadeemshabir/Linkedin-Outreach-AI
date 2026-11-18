@@ -106,21 +106,20 @@ function scrapeProfile() {
       const company = pTags[i+1] || null;
       const dur     = pTags[i+2] || null;
 
-      // Skip if looks like a date/location (not a title)
-      if (/^\d{4}|present|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(title)) {
+      // Skip a stray date line (not a title)
+      if (isDateLine(title)) {
         i++; continue;
       }
 
       experienceEntries.push({
         title,
         company:   company ? company.split('·')[0].trim() : null,
-        duration:  dur && /\d{4}|present|yr|mos|mo\b/i.test(dur) ? dur : null,
+        duration:  dur && (isDateLine(dur) || /\b\d+\s*(yrs?|mos?)\b/i.test(dur)) ? dur : null,
         isCurrent: experienceEntries.length === 0
       });
 
-      // Advance past this entry (title + company + date + optional location = 3-4 lines)
-      i += /remote|onsite|on-site|hybrid|india|bengaluru|mumbai|delhi/i.test(pTags[i+3] || '')
-        ? 4 : 3;
+      // Advance past this entry: title + company + dates, plus an optional location line
+      i += hasLocationLine(pTags, i) ? 4 : 3;
     }
   }
 
@@ -188,6 +187,30 @@ function scrapeProfile() {
     profileUrl:        window.location.href.split('?')[0],
     rawTitle:          document.title
   };
+}
+
+// "Jan 2022 - Present", "2019 - 2021", "Present". Anchored at the start of the
+// line, so titles like "Marketing Manager" or "Junior Analyst" are not dates.
+// (Regexes live inside functions: this file may be injected twice, and only
+// function declarations can be safely declared again.)
+function isDateLine(text) {
+  return /^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+)?\d{4}\b|^present\b/i.test(text || '');
+}
+
+// Does the entry starting at line i have a 4th line (its location)?
+// Decided by structure, not by a list of city names: the next entry's dates
+// sit 2 lines below its title, so find where the next date line is.
+function hasLocationLine(lines, i) {
+  const nextTitleAt3 = isDateLine(lines[i + 5]);
+  const nextTitleAt4 = isDateLine(lines[i + 6]);
+  if (nextTitleAt3 !== nextTitleAt4) return nextTitleAt4;
+  return looksLikeLocation(lines[i + 3]); // last entry, or unclear
+}
+
+function looksLikeLocation(text) {
+  if (!text || text.length > 80 || isDateLine(text)) return false;
+  if (/\b(remote|on-?site|hybrid)\b/i.test(text)) return true;
+  return /^[^,|@·]+(,[^,|@·]+){1,3}(\s·\s.+)?$/.test(text); // "City, Region, Country"
 }
 
 function extractFromHeadline(headline, field) {
