@@ -922,10 +922,7 @@ function statusDate(c) {
 
 // "Write the message" / "Write a follow-up": open their profile, ready to go.
 async function startNextMessage(c, step) {
-  const goal = step.kind === 'followup'
-    ? 'Polite follow-up: they have not replied to my last message yet. Keep it short and easy to answer.'
-    : 'They just accepted my connection request. Thank them in a few words, then make my ask.';
-  await chrome.storage.session.set({ intent: { profileKey: c.profileKey, channel: 'message', goal } });
+  await chrome.storage.session.set({ intent: { profileKey: c.profileKey, channel: 'message', goal: step.goal || '' } });
   await openProfile(c.profileUrl);
   switchTab('current');
 }

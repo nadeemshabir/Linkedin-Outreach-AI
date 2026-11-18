@@ -9,7 +9,7 @@
 // Each step is saved in chrome.storage.session, so closing the side panel
 // never loses work. The panel only draws the saved state.
 
-importScripts('utils/profile-url.js', 'utils/common-ground.js', 'utils/tracker.js');
+importScripts('utils/profile-url.js', 'utils/limits.js', 'utils/common-ground.js', 'utils/tracker.js');
 
 const SERVER_URL = 'https://linkedin-extention-production.up.railway.app';
 
@@ -20,6 +20,7 @@ const TIMEOUT_MS = { validate: 15000, quick: 60000, enrich: 120000, deep: 90000 
 const RUNNING_STEPS = ['reading', 'enriching', 'writing'];
 const HEARTBEAT_MS  = 15000;
 const running = new Set(); // profile keys with a job running in this worker
+const runs    = new Map(); // profile key → that run's promise (to wait for it)
 
 // ─── Toolbar icon opens the side panel ────────────────────────────────────────
 if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
@@ -73,6 +74,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleValidateKey(message.payload, sendResponse);
     return true;
   }
+
+  // From the "Write with Ark" button inside LinkedIn's own note/message box.
+  // It may only write for the tab it is in.
+  if (message.type === 'INPAGE_WRITE') {
+    inpageWrite({ ...(message.payload || {}), tabId: sender && sender.tab ? sender.tab.id : null }).then(sendResponse);
+    return true;
+  }
 });
 
 // ─── Jobs ─────────────────────────────────────────────────────────────────────
@@ -113,8 +121,89 @@ async function startJob({ tabId, mode, channel, maxChars, messageType, tone, goa
 
   running.add(profileKey);
   await saveJob(job);
-  runJob(job, licenseKey).catch(() => {}); // runJob records its own errors on the job
+  const run = runJob(job, licenseKey).catch(() => {}); // runJob records its own errors on the job
+  runs.set(profileKey, run);
+  run.then(() => { if (runs.get(profileKey) === run) runs.delete(profileKey); });
   return { ok: true, profileKey };
+}
+
+// Wait until no run is going for this profile (in this worker).
+async function whileRunning(profileKey) {
+  while (running.has(profileKey)) await (runs.get(profileKey) || delay(50));
+}
+
+// ─── "Write with Ark" inside LinkedIn's own boxes ────────────────────────────
+// The button in LinkedIn's note / message box (inpage.js) asks for a draft
+// here. It shares the side panel's job, so both always show the same draft:
+//   - a finished draft for this person and this kind of box: handed over at
+//     once, with your edits from the panel if you made any
+//   - a run already going: wait for it
+//   - otherwise: a Quick run with your last choices. If this person was read
+//     before, it reuses that, so the page is not scrolled again.
+// A note is fitted to the box's own limit before it is handed over.
+async function inpageWrite({ tabId, channel, maxChars }) {
+  await ready;
+  const tab        = await getTab(tabId);
+  const profileKey = tab && ProfileUrl.key(tab.url);
+  if (!profileKey) return { ok: false, error: 'Open their LinkedIn profile first.' };
+  channel = channel === 'note' ? 'note' : 'message';
+
+  await whileRunning(profileKey);
+  let job = await getJob(profileKey);
+  const reused = isDraftFor(job, channel);
+
+  if (!reused) {
+    const prefs   = await chrome.storage.local.get(['lastMessageType', 'lastTone', 'linkedinPlan']);
+    const contact = channel === 'message' ? await Tracker.find(profileKey) : null;
+    const next    = contact && Tracker.nextStep(contact);
+    const started = await startJob({
+      tabId,
+      mode:        'quick',
+      channel,
+      maxChars:    channel === 'note' ? (maxChars || Limits.limitFor('note', prefs.linkedinPlan)) : Limits.MESSAGE_SUGGESTED,
+      messageType: (job && job.messageType) || prefs.lastMessageType || 'Networking',
+      tone:        (job && job.tone) || prefs.lastTone || 'Neutral',
+      // Your goal for this person, if you set one in the panel for this kind
+      // of message; else what the tracker says comes next ("they accepted").
+      goal:        (job && job.channel === channel && job.goal) || (next && next.goal) || '',
+      regenerate:  !!(job && job.profile)
+    });
+    if (!started.ok && started.code === 'no_key') {
+      return { ...started, error: 'Add your Ark license key first: click the Ark icon in the toolbar, then Settings.' };
+    }
+    if (!started.ok) return started;
+    await whileRunning(profileKey);
+    job = await getJob(profileKey);
+    if (!job || job.step !== 'done') {
+      const error = job && job.error;
+      return { ok: false, error: (error && error.message) || 'Could not write it. Please try again.', code: error && error.code };
+    }
+  }
+
+  const draft = job.editedMessage || job.message;
+  const limit = channel === 'note' ? (maxChars || job.maxChars || Limits.NOTE_LIMIT.free) : null;
+  const fit   = limit ? Limits.fitToLimit(draft, limit) : null;
+  if (channel === 'note') await recordNoteUsed(profileKey).catch(() => {});
+  return {
+    ok:      true,
+    message: fit ? fit.text : draft,
+    reused,
+    limit,
+    fit:     fit && { changed: fit.changed, fits: fit.fits, removed: fit.removed.length }
+  };
+}
+
+function isDraftFor(job, channel) {
+  return !!(job && job.step === 'done' && job.channel === channel && (job.editedMessage || job.message));
+}
+
+// Free plans get only a few notes a month. A note put into LinkedIn's box
+// counts once per person per month, the same as copying it in the panel.
+async function recordNoteUsed(profileKey) {
+  const month = Limits.monthKey();
+  const { noteUsage } = await chrome.storage.local.get('noteUsage');
+  const profiles = noteUsage && noteUsage.month === month ? noteUsage.profiles : [];
+  if (!profiles.includes(profileKey)) await chrome.storage.local.set({ noteUsage: { month, profiles: [...profiles, profileKey] } });
 }
 
 // ─── Telling the writer where the message goes ───────────────────────────────

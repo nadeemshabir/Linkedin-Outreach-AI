@@ -78,8 +78,10 @@ describe('next step', () => {
   const c = (o) => ({ name: 'Aoife Murphy', channel: 'note', status: 'sent', updatedAt: now, ...o });
 
   it('accepted → time to send the real message', () => {
-    expect(Tracker.nextStep(c({ status: 'connected' }), now))
-      .toEqual({ due: true, kind: 'message', label: 'Aoife accepted your invite. Now send your message.' });
+    expect(Tracker.nextStep(c({ status: 'connected' }), now)).toEqual({
+      due: true, kind: 'message', label: 'Aoife accepted your invite. Now send your message.',
+      goal: 'They just accepted my connection request. Thank them in a few words, then make my ask.',
+    });
   });
 
   it('a message with no reply after 5 days → follow up', () => {

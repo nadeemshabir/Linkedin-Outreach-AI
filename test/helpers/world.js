@@ -112,6 +112,15 @@ export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, p
     start(payload) {
       return dispatchMessage({ type: 'START_JOB', payload });
     },
+    /** The "Write with Ark" button inside LinkedIn's box on tab `tabId` asks the background. */
+    inpage(payload, tabId = 1) {
+      const tab = tabs.find((t) => t.id === tabId);
+      return dispatchMessage({ type: 'INPAGE_WRITE', payload }, { id: chrome.runtime.id, tab: { ...tab } });
+    },
+    /** How many times the background read (scrolled) the page in tab `tabId`. */
+    scrapes(tabId = 1) {
+      return chrome.tabs.sendMessage.mock.calls.filter(([id, m]) => id === tabId && m.action === 'scrapeProfile').length;
+    },
   };
 }
 

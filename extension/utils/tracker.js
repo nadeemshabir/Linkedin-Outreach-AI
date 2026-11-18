@@ -135,11 +135,19 @@ const Tracker = (() => {
   function nextStep(c, now = Date.now()) {
     const first = String(c.name || 'They').split(/\s+/)[0];
     const days  = (t) => (t ? (now - t) / DAY : 0);
+    // `goal` tells the writer what this next message is for. The panel and
+    // the in-page "Write with Ark" button both use it.
     if (c.status === 'connected') {
-      return { due: true, kind: 'message', label: `${first} accepted your invite. Now send your message.` };
+      return {
+        due: true, kind: 'message', label: `${first} accepted your invite. Now send your message.`,
+        goal: 'They just accepted my connection request. Thank them in a few words, then make my ask.',
+      };
     }
     if (c.status === 'sent' && c.channel === 'message' && days(c.sentAt) >= 5) {
-      return { due: true, kind: 'followup', label: `No reply from ${first} in ${Math.floor(days(c.sentAt))} days. Send a short follow-up.` };
+      return {
+        due: true, kind: 'followup', label: `No reply from ${first} in ${Math.floor(days(c.sentAt))} days. Send a short follow-up.`,
+        goal: 'Polite follow-up: they have not replied to my last message yet. Keep it short and easy to answer.',
+      };
     }
     if (c.status === 'sent' && c.channel !== 'message' && days(c.sentAt) >= 14) {
       return { due: false, kind: 'waiting', label: `${first} has not accepted in 2 weeks. Many people never check invites.` };

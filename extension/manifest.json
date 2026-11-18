@@ -27,7 +27,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.linkedin.com/*"],
-      "js": ["scraper.js", "content_script.js"],
+      "js": ["scraper.js", "content_script.js", "inpage.js"],
       "run_at": "document_idle"
     }
   ],

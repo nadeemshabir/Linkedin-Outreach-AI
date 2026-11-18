@@ -78,7 +78,7 @@ globalThis.LinkedInScraper = globalThis.LinkedInScraper || (() => {
 
   // ── Top card ───────────────────────────────────────────────────────────────
   function titleName(doc) {
-    // "(6) Jeff Weiner | LinkedIn" → "Jeff Weiner"
+    // "(6) Jane Doe | LinkedIn" → "Jane Doe"
     return clean(String(doc.title || '').replace(/^\(\d+\+?\)\s*/, '').split('|')[0]);
   }
 
