@@ -8,4 +8,5 @@ dist/
 
 # Local-only files
 PLAN.md
+DEMO-SCRIPT.md
 .claude/

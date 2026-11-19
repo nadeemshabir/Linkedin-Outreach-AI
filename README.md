@@ -76,6 +76,8 @@ Read the 100% with care: the test pages copy the structure that v4's reader was 
 4. Open any LinkedIn profile → **Generate message**.
 5. Or write straight into LinkedIn: on a profile, click **Connect → Add a note** (or **Message**). A **✨ Write a note to …** button appears inside LinkedIn's box. Click it, read the note, then press LinkedIn's **Send** yourself.
 
+**No license key or LinkedIn account?** Run `npm install`, then `npm run demo`. It opens the real extension in a Chromium window, on two test profiles (made-up people, LinkedIn's 2026 page structure) with a fake Ark server that gives example answers. Every other site is blocked. Open the side panel from the extension's toolbar icon (under the puzzle-piece button).
+
 ## Run the tests
 
 ```bash

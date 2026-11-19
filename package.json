@@ -10,6 +10,7 @@
     "test:e2e": "playwright test",
     "check:permissions": "node scripts/check-permissions.mjs",
     "bench": "node scripts/bench-scraper.mjs",
+    "demo": "node scripts/demo.mjs",
     "screenshots": "node scripts/screenshots.mjs"
   },
   "engines": {
