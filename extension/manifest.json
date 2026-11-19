@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Outreach AI",
-  "version": "3.0.2",
+  "version": "4.0.0",
   "description": "AI-powered LinkedIn outreach message generator. Requires a license key.",
   "minimum_chrome_version": "116",
   "permissions": [

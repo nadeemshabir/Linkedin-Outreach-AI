@@ -8,6 +8,14 @@ Commit [`f8f21ec`](../../commit/f8f21ec) is the original v3.0.2 exactly as recei
 
 **The biggest finding:** on LinkedIn's 2026 profile page, v3 reads almost nothing. Run unchanged on a live profile, it sent the AI a name with the notification count stuck on (like "(6) Jane Doe") and an empty profile, so every "personalized" message was generic. v4's new reader gets every field. See [Reading LinkedIn](#reading-linkedin-v3-vs-v4).
 
+<p>
+  <img src="docs/screenshots/panel-4-quick-done.png" width="260" alt="Side panel: a draft with the 200-character meter, Fit to 200, common ground and the message check">
+  <img src="docs/screenshots/panel-7-tracker.png" width="260" alt="Tracker: follow-ups due, statuses and reply rates">
+</p>
+<img src="docs/screenshots/inpage-2-note-written.png" width="560" alt="Write a note to Aoife, inside LinkedIn's Add a note box: the note is fitted to 200 characters and Send is left to you">
+
+<sub>The real extension in Chromium (`npm run screenshots`). The LinkedIn page is a test page that copies the structure of LinkedIn's 2026 profile page; the person and the messages are made up.</sub>
+
 ## What changed
 
 | | v3.0.2 (before) | v4 (now) |

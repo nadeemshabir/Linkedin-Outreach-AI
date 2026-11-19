@@ -1,25 +1,24 @@
-// Takes screenshots of the real side panel in Chromium, at side-panel size.
+// Takes screenshots of the real extension in Chromium: the side panel (at
+// side-panel size) and the "Write with Ark" button inside LinkedIn's note box.
 // LinkedIn and Ark's server are local fakes, so this needs no account or key.
+// The LinkedIn page is a test page that copies the structure of LinkedIn's
+// 2026 profile page, with a made-up person (test/fixtures/).
 //   node scripts/screenshots.mjs [outDir]
 import { chromium } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { profilePage } from '../test/fixtures/linkedin-2026.js';
+import { PROFILES } from '../test/fixtures/profiles.js';
+import { dialogsScript } from '../test/fixtures/linkedin-dialogs.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const EXT = path.join(ROOT, 'extension');
 const OUT = path.resolve(process.argv[2] || path.join(ROOT, 'docs', 'screenshots'));
 const SERVER = 'https://linkedin-extention-production.up.railway.app';
-const PROFILE_URL = 'https://www.linkedin.com/in/aoife-test/';
-
-const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Aoife Murphy | LinkedIn</title></head><body><main>
-  <section><h1>Aoife Murphy</h1><p>Senior Data Scientist at Spotify | ML for recommendations</p><p>Dublin, County Dublin, Ireland</p></section>
-  <section><h2>Experience</h2>
-    <p>Senior Data Scientist</p><p>Spotify · Full-time</p><p>Jan 2022 - Present · 2 yrs</p><p>Dublin, Ireland</p>
-    <p>Data Scientist</p><p>Accenture · Full-time</p><p>2018 - 2021 · 3 yrs</p><p>Dublin, Ireland</p>
-  </section>
-  <section><h2>Education</h2><p>Trinity College Dublin</p><p>MSc Computer Science</p><p>2016 - 2017</p></section>
-</main></body></html>`;
+const AOIFE = PROFILES.find((p) => p.name === 'Aoife Murphy');
+const PROFILE_URL = `https://www.linkedin.com/in/${AOIFE.slug}/`;
+const PAGE = profilePage(AOIFE).replace('</body>', `${dialogsScript}</body>`);
 
 // Your own profile (Settings → "Use the profile I'm on"), for common ground.
 const ME = {
@@ -65,6 +64,7 @@ const panel = await context.newPage();
 await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
 await panel.evaluate((me) => chrome.storage.local.set({ licenseKey: 'ARK-DEMO-0000-0000', userName: 'Rahul', myProfile: me }), ME);
 await panel.reload();
+await panel.locator('#key-status.active').waitFor(); // "● 20 left today", not "Checking…"
 await panel.screenshot({ path: path.join(OUT, 'panel-1-no-profile.png') });
 
 const linkedin = await context.newPage();
@@ -99,7 +99,7 @@ const person = (slug, name, headline, status, extra = {}) => ({
   channel: 'note', messageType: 'Referral', tone: 'Casual', status, createdAt: t - 9 * day, updatedAt: t - day, history: [], ...extra,
 });
 await panel.evaluate((contacts) => chrome.storage.local.set({ contacts }), {
-  '/in/aoife-test/': person('aoife-test', 'Aoife Murphy', 'Senior Data Scientist at Spotify', 'connected', { connectedAt: t - day }),
+  [`/in/${AOIFE.slug}/`]: person(AOIFE.slug, 'Aoife Murphy', 'Senior Data Scientist at Spotify', 'connected', { connectedAt: t - day }),
   '/in/liam/':  person('liam', 'Liam Byrne', 'Engineering Manager at Stripe', 'sent', { channel: 'message', sentAt: t - 6 * day }),
   '/in/priya/': person('priya', 'Priya Nair', 'ML Engineer at Zalando', 'replied', { sentAt: t - 8 * day, repliedAt: t - 2 * day }),
   '/in/sean/':  person('sean', "Seán O'Brien", 'Recruiter at Workday', 'replied', { sentAt: t - 7 * day, repliedAt: t - 3 * day }),
@@ -109,6 +109,19 @@ await panel.setViewportSize({ width: 400, height: 1300 });
 await panel.click('#tabbtn-recent');
 await panel.locator('#due-list .contact-card').first().waitFor();
 await panel.screenshot({ path: path.join(OUT, 'panel-7-tracker.png') });
+
+// "Write with Ark" inside LinkedIn's own note box: Connect → Add a note →
+// the button → the note, fitted to 200. (It reuses the panel's draft.)
+await linkedin.bringToFront();
+await linkedin.setViewportSize({ width: 1000, height: 640 });
+await linkedin.getByRole('button', { name: 'Invite Aoife Murphy to connect' }).click();
+await linkedin.getByRole('button', { name: 'Add a note', exact: true }).click();
+const write = linkedin.getByRole('button', { name: '✨ Write a note to Aoife' });
+await write.waitFor();
+await linkedin.screenshot({ path: path.join(OUT, 'inpage-1-note-box.png') });
+await write.click();
+await linkedin.getByRole('status').filter({ hasText: 'press Send' }).waitFor();
+await linkedin.screenshot({ path: path.join(OUT, 'inpage-2-note-written.png') });
 
 await context.close();
 console.log(`Saved screenshots to ${OUT}`);
