@@ -37,7 +37,7 @@
 
       <div class="alert alert-warning hidden" id="no-key-warning" role="status">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <span id="key-warning-text">No license key found. Add yours in the Settings tab.</span>
+        <span id="key-warning-text">Your Anthropic API key was not accepted. Check it in Settings, or remove it to use Free Mode.</span>
       </div>
 
       <div class="profile-card hidden" id="profile-section">
@@ -104,11 +104,11 @@
           placeholder="e.g. Referral for the Data Analyst role at Spotify" />
       </div>
 
-      <div class="mode-toggle" role="radiogroup" aria-label="Mode">
+      <div class="mode-toggle" role="radiogroup" aria-label="Quick or Deep">
         <button class="mode-btn active" id="mode-simple" role="radio" aria-checked="true">⚡ Quick</button>
         <button class="mode-btn" id="mode-deep" role="radio" aria-checked="false">🔍 Deep</button>
       </div>
-      <p class="mode-hint" id="mode-hint">Fast. Uses the profile page only.</p>
+      <p class="mode-hint" id="mode-hint">Writes straight away.</p>
 
       <button id="generate-btn" class="btn btn-primary btn-full">
         <span id="generate-label">Generate message</span>
@@ -129,7 +129,7 @@
           <div class="layer-badge l2">2</div>
           <div class="layer-info">
             <div class="layer-title">Find talking points</div>
-            <div class="layer-desc">Company news and their public work (about 20s)</div>
+            <div class="layer-desc">From their profile: posts, role, school</div>
           </div>
           <div class="layer-status-wrap"><div class="status-dot"></div><span class="layer-status-text"></span></div>
         </div>
@@ -137,7 +137,7 @@
           <div class="layer-badge l3">3</div>
           <div class="layer-info">
             <div class="layer-title">Write the message</div>
-            <div class="layer-desc">In your tone, using your bio and resume</div>
+            <div class="layer-desc">Free Mode: from a template. AI Mode: by Claude, with your key.</div>
           </div>
           <div class="layer-status-wrap"><div class="status-dot"></div><span class="layer-status-text"></span></div>
         </div>
@@ -181,13 +181,13 @@
       </div>
 
       <div class="hooks-panel hidden" id="hooks-panel">
-        <div class="hooks-label">⚡ Top hooks found</div>
+        <div class="hooks-label">⚡ Talking points found</div>
         <div id="hooks-list"></div>
       </div>
 
       <details class="how-it-works">
-        <summary>How does Deep Mode work?</summary>
-        <p>Steps 2 and 3 run on Ark's server. OpenAI turns the profile into structured data and searches the web for company news. Claude then writes the message. Your license key, bio and resume are sent with each request.</p>
+        <summary>How are messages written?</summary>
+        <p>With no key, Free Mode writes the message from a template, on this device, for free. With your own Anthropic API key (Settings), AI Mode lets Claude write it. Quick writes straight away; Deep first shows the talking points it found on the profile.</p>
       </details>
 
     </section>
@@ -226,14 +226,14 @@
     <section class="tab-content" id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings">
       <div class="settings-form">
 
-        <!-- License Key — primary field -->
+        <!-- Optional: your own Anthropic API key (AI Mode) -->
         <div class="license-key-section">
-          <label class="license-key-label" for="license-key">License Key</label>
-          <div class="license-key-desc">Enter the key provided by your account manager.</div>
+          <label class="license-key-label" for="api-key">Anthropic API key (optional)</label>
+          <div class="license-key-desc">Leave empty for Free Mode: messages are written from a template on this device, for free. Add your own key from console.anthropic.com to let Claude write them (AI Mode). Anthropic charges your account, well under a cent per message.</div>
           <div class="license-key-input-wrap">
-            <input id="license-key" type="text" class="license-key-input"
-              placeholder="ARK-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" />
-            <button class="validate-btn" id="validate-btn">Verify</button>
+            <input id="api-key" type="password" class="license-key-input"
+              placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+            <button class="validate-btn" id="validate-btn">Test</button>
           </div>
           <div class="key-validation-status hidden" id="key-validation-status" role="status"></div>
         </div>
@@ -271,20 +271,31 @@
         </div>
 
         <div class="field-group full">
-          <label class="field-label" for="resume-upload">Your Resume (PDF)</label>
+          <label class="field-label" for="resume-upload">Your Resume (PDF, optional)</label>
           <div class="file-upload-area" id="file-upload-area">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             <span id="file-label">Click to upload or drag PDF here</span>
             <input id="resume-upload" type="file" accept=".pdf" class="file-input" />
           </div>
           <div class="resume-status hidden" id="resume-status" role="status"></div>
+          <label class="check-row" for="resume-for-ai">
+            <input id="resume-for-ai" type="checkbox" />
+            <span>Use my resume in AI Mode. It is sent to Anthropic with each message, so Claude can say what you can offer.</span>
+          </label>
+          <button class="btn-link hidden" id="remove-resume-btn" type="button">Remove resume</button>
         </div>
 
         <button id="save-settings-btn" class="btn btn-primary btn-full">Save Settings</button>
         <div class="status-bar hidden" id="settings-status" role="status"></div>
 
         <div class="settings-note">
-          Your key, bio and resume are saved on this device. Your bio and resume are sent to Ark's server each time you generate a message.
+          Everything is saved only on this device. In Free Mode, nothing leaves it. In AI Mode, these go to Anthropic with your key, for each message:
+          <ul class="settings-note-list">
+            <li>the profile you are viewing</li>
+            <li>your name, bio and goal</li>
+            <li>what you have in common (from your own profile)</li>
+            <li>your resume, if you turned that on</li>
+          </ul>
         </div>
 
       </div>

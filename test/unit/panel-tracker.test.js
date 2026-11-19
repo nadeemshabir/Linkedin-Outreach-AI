@@ -1,19 +1,36 @@
 // The tracker, as the user sees it: real panel + real background (Phase 5).
+// Messages are written in Free Mode here (no key), so nothing is fetched.
 import { describe, it, expect } from 'vitest';
-import { createWorld, openPanel, person, until, settle, fire, KEY } from '../helpers/world.js';
+import { createWorld, openPanel, person, until, settle, fire } from '../helpers/world.js';
 
 const AOIFE = person('aoife', 'Aoife Murphy');
 const LIAM  = person('liam', 'Liam Byrne');
-const VALID = () => ({ key: KEY, state: 'valid', remaining: 9, checkedAt: Date.now() });
 
 function world(opts = {}) {
   return createWorld({
-    local: { licenseKey: KEY, keyStatus: VALID(), ...(opts.local || {}) },
+    local: opts.local || {},
     tabs: [{ id: 1, url: (opts.startOn || AOIFE).profileUrl, active: true }],
     pages: { 1: opts.startOn || AOIFE },
     pagesByUrl: { [AOIFE.profileUrl]: AOIFE, [LIAM.profileUrl]: LIAM },
-    server: (path, body) => [200, { success: true, message: `Hi ${body.profileData.name.split(' ')[0]}! Open to a chat?` }],
   });
+}
+
+// Aoife accepted your invite. You are on Liam's profile, with the tracker open.
+async function aoifeAccepted() {
+  const w = world({ startOn: LIAM });
+  const now = Date.now();
+  await w.chrome.storage.local.set({
+    contacts: {
+      '/in/aoife/': {
+        profileKey: '/in/aoife/', profileUrl: AOIFE.profileUrl, name: 'Aoife Murphy', message: 'Hi Aoife',
+        channel: 'note', status: 'connected', createdAt: now, updatedAt: now, connectedAt: now, history: [],
+      },
+    },
+  });
+  const panel = await openPanel(w);
+  panel.$('tabbtn-recent').click();
+  await until(() => cards(panel, 'due-list').length === 1);
+  return { w, panel };
 }
 
 async function generate(panel) {
@@ -73,20 +90,7 @@ describe('tracker', () => {
   });
 
   it('"Write the message" opens their profile, ready for a message with a goal', async () => {
-    const w = world({ startOn: LIAM });
-    const now = Date.now();
-    await w.chrome.storage.local.set({
-      contacts: {
-        '/in/aoife/': {
-          profileKey: '/in/aoife/', profileUrl: AOIFE.profileUrl, name: 'Aoife Murphy', message: 'Hi Aoife',
-          channel: 'note', status: 'connected', createdAt: now, updatedAt: now, connectedAt: now, history: [],
-        },
-      },
-    });
-    const panel = await openPanel(w);
-    panel.$('tabbtn-recent').click();
-    await until(() => cards(panel, 'due-list').length === 1);
-
+    const { w, panel } = await aoifeAccepted();
     cards(panel, 'due-list')[0].querySelector('.next-btn').click();
     await until(() => panel.$('profile-name').textContent === 'Aoife Murphy');
     await until(() => panel.$('goal').value !== '');
@@ -94,6 +98,20 @@ describe('tracker', () => {
     expect(panel.$('tab-current').classList.contains('active')).toBe(true);
     expect(panel.$('channel-message').getAttribute('aria-checked')).toBe('true');
     expect(panel.$('goal').value).toMatch(/accepted my connection request/);
+  });
+
+  it('then Generate (Free Mode) thanks them for connecting, and does not ask to connect again', async () => {
+    const { w, panel } = await aoifeAccepted();
+    cards(panel, 'due-list')[0].querySelector('.next-btn').click();
+    await until(() => panel.$('goal').value !== '');
+    panel.$('generate-btn').click();
+    await until(() => panel.$('status-message').textContent === 'Message ready. Written in Free Mode.');
+
+    const message = panel.$('generated-message').value;
+    expect(message).toMatch(/^Hi Aoife,\s+Thanks for connecting!/);
+    expect(message).not.toMatch(/accepted my connection request/i); // the goal is an instruction, not text to paste
+    expect(message).not.toMatch(/open to connecting/i);              // you are connected already
+    expect(w.fetch).not.toHaveBeenCalled();
   });
 
   it('shows your numbers once you have sent something', async () => {
@@ -115,6 +133,29 @@ describe('tracker', () => {
       '6 contacted · 50% accepted · 33% replied' + 'Working best for you: Referral · Casual (2 of 3 replied)');
   });
 
+  it('a name with quote marks is shown as it is, and cannot add anything to its card', async () => {
+    const now = Date.now();
+    const drafted = (slug, name) => ({
+      profileKey: `/in/${slug}/`, profileUrl: `https://www.linkedin.com/in/${slug}/`, name, message: 'Hi',
+      channel: 'note', status: 'drafted', createdAt: now, updatedAt: now, history: [],
+    });
+    // Anyone can put quote marks in their LinkedIn name. Both people are made up.
+    const NICKNAME = 'Niamh "Nia" O\'Connor';
+    const CRAFTED  = 'Ciara" style="position:fixed;inset:0;opacity:0';
+    const panel = await openPanel(world({
+      local: { contacts: { '/in/niamh/': drafted('niamh', NICKNAME), '/in/ciara/': drafted('ciara', CRAFTED) } },
+    }));
+
+    const selectFor = Object.fromEntries(cards(panel).map((card) =>
+      [card.querySelector('.contact-name').textContent, card.querySelector('.status-select')]));
+    expect(Object.keys(selectFor).sort()).toEqual([CRAFTED, NICKNAME].sort());
+    expect(selectFor[NICKNAME].getAttribute('aria-label')).toBe(`Status for ${NICKNAME}`);
+    expect(selectFor[CRAFTED].getAttribute('aria-label')).toBe(`Status for ${CRAFTED}`);
+    // The " in the name did not end the label, so it could not add a style of its own.
+    expect(selectFor[CRAFTED].hasAttribute('style')).toBe(false);
+    expect(selectFor[CRAFTED].getAttributeNames().sort()).toEqual(['aria-label', 'class']);
+  });
+
   it("brings over v3's Recent list on first open", async () => {
     const panel = await openPanel(world({
       local: { recentContacts: [{ profileUrl: LIAM.profileUrl, name: 'Liam Byrne', message: 'Old draft', timestamp: 1700000000000 }] },
@@ -133,7 +174,7 @@ describe('tracker', () => {
     });
     function onPage(relationship, contacts) {
       return createWorld({
-        local: { licenseKey: KEY, keyStatus: VALID(), contacts },
+        local: { contacts },
         tabs: [{ id: 1, url: AOIFE.profileUrl, active: true }],
         pages: { 1: { ...AOIFE, relationship } },
       });

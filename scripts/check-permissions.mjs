@@ -12,12 +12,17 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'extension', 'manife
 
 // Permissions Chrome grants without any install warning.
 const NO_WARNING = new Set(['activeTab', 'storage', 'scripting', 'sidePanel', 'alarms']);
-// Host access that v3.0.2 already had (users accepted it then).
-const HOSTS = new Set(['https://www.linkedin.com/*', 'https://linkedin-extention-production.up.railway.app/*']);
+// Host access that Ark's 3.1.0 already has (users accept it there): LinkedIn,
+// and Anthropic's API for AI Mode with the user's own key.
+const HOSTS = new Set(['https://www.linkedin.com/*', 'https://api.anthropic.com/*']);
+
+// Content-script match patterns give host access too (and the same warning).
+const MATCHES = (manifest.content_scripts || []).flatMap((cs) => cs.matches || []);
 
 const problems = [
   ...(manifest.permissions || []).filter((p) => !NO_WARNING.has(p)).map((p) => `permission "${p}" shows an install warning`),
   ...(manifest.host_permissions || []).filter((h) => !HOSTS.has(h)).map((h) => `new host access "${h}" shows an install warning`),
+  ...MATCHES.filter((m) => !HOSTS.has(m)).map((m) => `content script on "${m}" gives new host access (install warning)`),
 ];
 
 if (problems.length) {

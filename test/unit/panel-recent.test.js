@@ -1,18 +1,18 @@
-// Recent keeps the message the user actually has (B7).
+// The tracker keeps the message the user actually has: the newest version,
+// with their own edits (B7).
 import { describe, it, expect } from 'vitest';
-import { createWorld, openPanel, person, until, settle, type, KEY } from '../helpers/world.js';
+import { createWorld, openPanel, person, until, settle, type, claudeReply, API_KEY } from '../helpers/world.js';
 
-const VALID = () => ({ key: KEY, state: 'valid', remaining: 9, checkedAt: Date.now() });
+const AOIFE = person('aoife', 'Aoife');
 
 describe('Recent stays in sync with what the user actually has (B7)', () => {
-  it('"New version" replaces the saved message (Quick Mode)', async () => {
+  it('"New version" replaces the saved message (AI Mode, Quick)', async () => {
     let n = 0;
-    const aoife = person('aoife', 'Aoife');
     const w = createWorld({
-      local: { licenseKey: KEY, keyStatus: VALID() },
-      tabs: [{ id: 1, url: aoife.profileUrl, active: true }],
-      pages: { 1: aoife },
-      server: () => [200, { success: true, message: `draft ${++n}` }],
+      local: { userApiKey: API_KEY },
+      tabs: [{ id: 1, url: AOIFE.profileUrl, active: true }],
+      pages: { 1: AOIFE },
+      claude: () => claudeReply(`draft ${++n}`),
     });
     const panel = await openPanel(w);
     panel.$('generate-btn').click();
@@ -27,53 +27,50 @@ describe('Recent stays in sync with what the user actually has (B7)', () => {
     expect(saved[0].message).toBe('draft 2');
   });
 
-  it('edits typed into the message box are saved', async () => {
-    const aoife = person('aoife', 'Aoife');
+  it('edits typed into the message box are saved (Free Mode)', async () => {
     const w = createWorld({
-      local: { licenseKey: KEY, keyStatus: VALID() },
-      tabs: [{ id: 1, url: aoife.profileUrl, active: true }],
-      pages: { 1: aoife },
-      server: () => [200, { success: true, message: 'AI draft' }],
+      tabs: [{ id: 1, url: AOIFE.profileUrl, active: true }],
+      pages: { 1: AOIFE },
     });
     const panel = await openPanel(w);
     panel.$('generate-btn').click();
-    await until(() => panel.$('generated-message').value === 'AI draft');
-    type(panel.$('generated-message'), 'AI draft, edited by me');
+    await until(() => panel.$('status-message').textContent === 'Message ready. Written in Free Mode.');
+    const draft = panel.$('generated-message').value;
+    expect((await w.recent())[0]).toMatchObject({ message: draft, edited: false });
+
+    type(panel.$('generated-message'), `${draft} Thanks!`);
     await settle();
-    expect((await w.recent())[0]).toMatchObject({ message: 'AI draft, edited by me', edited: true });
+    expect((await w.recent())[0]).toMatchObject({ message: `${draft} Thanks!`, edited: true });
   });
 
-  it('Deep Mode keeps each person separate even if the server omits profileUrl', async () => {
-    const aoife = person('aoife', 'Aoife');
-    const liam  = person('liam', 'Liam');
+  it('Deep Mode keeps each person separate as you move between profiles in one tab (Free Mode)', async () => {
+    // Headlines with "at": the talking points may then name where they work.
+    const aoife = person('aoife', 'Aoife', { headline: 'Data Scientist at Spotify' });
+    const liam  = person('liam', 'Liam', { headline: 'Engineering Manager at Stripe', currentCompany: 'Stripe' });
     const w = createWorld({
-      local: { licenseKey: KEY, keyStatus: VALID() },
       tabs: [{ id: 1, url: aoife.profileUrl, active: true }],
       pages: { 1: aoife },
-      server: (path, body) => {
-        // The server's structured profile has no profileUrl field.
-        if (path === '/api/generate/enrich') {
-          return [200, { success: true, profileJSON: { name: body.rawProfileData.name }, enrichmentJSON: { topHooks: [] } }];
-        }
-        return [200, { success: true, message: `Hi ${body.profileJSON.name}`, remaining: 8 }];
-      },
     });
+    const talkingPoints = (panel) => [...panel.$('hooks-list').children].map((el) => el.textContent);
     const panel = await openPanel(w);
     panel.$('mode-deep').click();
     panel.$('generate-btn').click();
-    await until(() => panel.$('generated-message').value === 'Hi Aoife');
+    await until(() => panel.$('generated-message').value.startsWith('Hi Aoife,'));
+    expect(talkingPoints(panel)).toEqual(['Works at Spotify']);
 
     w.navigate(1, liam.profileUrl, liam);
     await until(() => panel.$('profile-name').textContent === 'Liam');
     panel.$('generate-btn').click();
-    await until(() => panel.$('generated-message').value === 'Hi Liam');
+    await until(() => panel.$('generated-message').value.startsWith('Hi Liam,'));
+    expect(talkingPoints(panel)).toEqual(['Works at Stripe']);
     await settle();
 
+    // Two entries, each with its own link and its own draft. (Not checked by
+    // order: that comes from the clock, which is not what this test is about.)
     const saved = await w.recent();
-    expect(saved.map((c) => c.name)).toEqual(['Liam', 'Aoife']);
-    expect(saved.map((c) => c.profileUrl)).toEqual([
-      'https://www.linkedin.com/in/liam/',
-      'https://www.linkedin.com/in/aoife/',
-    ]);
+    expect(saved).toHaveLength(2);
+    const byName = Object.fromEntries(saved.map((c) => [c.name, c]));
+    expect(byName.Aoife).toMatchObject({ profileUrl: 'https://www.linkedin.com/in/aoife/', message: expect.stringMatching(/^Hi Aoife,/) });
+    expect(byName.Liam).toMatchObject({ profileUrl: 'https://www.linkedin.com/in/liam/', message: expect.stringMatching(/^Hi Liam,/) });
   });
 });

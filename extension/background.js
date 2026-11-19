@@ -1,21 +1,31 @@
 'use strict';
 
 // background.js — the extension's engine.
-// It calls Ark's server, never OpenAI/Anthropic directly. All AI runs
-// server-side; the extension only sends profile data + the license key.
+// Since Ark's 3.1.0 there is no Ark server and no license key. The message is
+// written in one of two ways:
+//   Free Mode (no key): from a template, on this device (utils/writer.js)
+//   AI Mode: by Claude, with the user's OWN Anthropic API key, called directly
+//            from here (the key never goes anywhere else)
 //
 // The background owns every generation "job":
 //   read the profile → (Deep Mode: find talking points) → write the message.
 // Each step is saved in chrome.storage.session, so closing the side panel
 // never loses work. The panel only draws the saved state.
 
-importScripts('utils/profile-url.js', 'utils/limits.js', 'utils/common-ground.js', 'utils/tracker.js');
+importScripts('utils/profile-url.js', 'utils/limits.js', 'utils/common-ground.js', 'utils/tracker.js', 'utils/writer.js');
 
-const SERVER_URL = 'https://linkedin-extention-production.up.railway.app';
-
-// How long each call may take before we give up and tell the user.
-// Deep Mode enrichment usually takes ~20s, so its limit is generous.
-const TIMEOUT_MS = { validate: 15000, quick: 60000, enrich: 120000, deep: 90000 };
+// AI Mode. Ark's 3.1.0 chose Claude Haiku 5.5: fast, and very cheap for a
+// student paying with their own key. A bigger model writes better, but costs
+// far more. To change the model, change the thinking setting with it:
+//   Haiku 5.5:  { type: 'disabled' } (a short note needs no thinking, and
+//               thinking would use up max_tokens)
+//   Sonnet 5.5: { type: 'between_tools' }
+//   Opus 5.5:   null (thinking cannot be turned off; lower the effort instead)
+const ANTHROPIC_URL      = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_MODEL    = 'claude-haiku-5-5';
+const ANTHROPIC_THINKING = { type: 'disabled' };
+const AI_TIMEOUT_MS      = 30000;
+const RESUME_EXTRA_MS    = 30000; // a resume PDF takes longer to upload
 
 const RUNNING_STEPS = ['reading', 'enriching', 'writing'];
 const HEARTBEAT_MS  = 15000;
@@ -30,6 +40,16 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
   chrome.action.setPopup({ popup: 'sidepanel.html?mode=popup' });
 }
 
+// ─── Your key and resume stay out of LinkedIn's pages ────────────────────────
+// chrome.storage.local holds your Anthropic key and your resume. By default,
+// the scripts this extension runs on linkedin.com could read it too. They
+// never need to, so only the extension's own pages and this worker may.
+// Set each time the worker starts. (A Chrome that cannot do this for local
+// storage refuses the call; then it stays as in 3.1.0.)
+if (chrome.storage.local.setAccessLevel) {
+  chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' }).catch(() => {});
+}
+
 // A job that was running when Chrome stopped this worker can never finish.
 // Mark it, so the panel offers "try again" instead of spinning forever.
 const ready = markInterruptedJobs();
@@ -40,7 +60,19 @@ const ready = markInterruptedJobs();
 chrome.alarms.get('followups').then(a => a || chrome.alarms.create('followups', { periodInMinutes: 60 }));
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'followups') updateBadge(); });
 chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.contacts) updateBadge(); });
-chrome.runtime.onInstalled.addListener(() => { Tracker.all().then(updateBadge); }); // moves v3's Recent over
+chrome.runtime.onInstalled.addListener(() => {
+  Tracker.all().then(updateBadge); // moves v3's Recent over
+  forgetLicenseKey();
+});
+
+// Keys from before 3.1.0 (Ark's license key and its server status) are of no
+// use any more. AI Mode uses the user's own Anthropic key (userApiKey).
+async function forgetLicenseKey() {
+  try {
+    const { keyStatus } = await chrome.storage.local.get('keyStatus');
+    await chrome.storage.local.remove(keyStatus && 'key' in keyStatus ? ['licenseKey', 'keyStatus'] : ['licenseKey']);
+  } catch (_) { /* nothing to clean up */ }
+}
 updateBadge();
 
 async function updateBadge() {
@@ -53,7 +85,13 @@ async function updateBadge() {
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
+// Content scripts run inside LinkedIn's pages, so their messages are treated
+// as untrusted: they may only ask for INPAGE_WRITE, for their own tab. The
+// rest is for the side panel (an extension page, which has no sender.tab).
+const PANEL_ONLY = new Set(['START_JOB', 'PEEK_PROFILE', 'IMPORT_MY_PROFILE', 'TEST_API_KEY']);
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || (PANEL_ONLY.has(message.type) && sender && sender.tab)) return undefined;
 
   if (message.type === 'START_JOB') {
     startJob(message.payload).then(sendResponse);
@@ -70,8 +108,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'VALIDATE_KEY') {
-    handleValidateKey(message.payload, sendResponse);
+  if (message.type === 'TEST_API_KEY') {
+    testApiKey(message.payload || {}).then(sendResponse);
     return true;
   }
 
@@ -84,15 +122,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ─── Jobs ─────────────────────────────────────────────────────────────────────
-async function startJob({ tabId, mode, channel, maxChars, messageType, tone, goal, useCommonGround, regenerate = false }) {
+async function startJob({ tabId, mode, channel, maxChars, messageType, tone, goal, useCommonGround, regenerate = false, variant }) {
   await ready;
   const tab        = await getTab(tabId);
   const profileKey = tab && ProfileUrl.key(tab.url);
   if (!profileKey) return { ok: false, error: 'Open a LinkedIn profile first.' };
   if (running.has(profileKey)) return { ok: false, error: 'Already working on this profile.' };
-
-  const licenseKey = await getStoredKey();
-  if (!licenseKey) return { ok: false, error: 'No license key found. Add it in Settings.', code: 'no_key' };
 
   // "New version" reuses what we already know and only rewrites the message.
   const prev = regenerate ? await getJob(profileKey) : null;
@@ -109,11 +144,12 @@ async function startJob({ tabId, mode, channel, maxChars, messageType, tone, goa
     useCommonGround: Array.isArray(useCommonGround) ? useCommonGround : (prev ? prev.useCommonGround : null),
     step:           'reading',
     profile:        prev ? prev.profile : null,
-    profileJSON:    prev ? prev.profileJSON : null,
     enrichmentJSON: prev ? prev.enrichmentJSON : null,
     // Keep showing the previous draft until the new one arrives.
     message:        prev ? prev.message : null,
     messageId:      prev ? prev.messageId : null,
+    // Free Mode is a template: "New version" moves on to other wording.
+    variant:        Number.isInteger(variant) ? variant : (prev ? (prev.variant || 0) + 1 : 0),
     error:          null,
     startedAt:      Date.now()
   };
@@ -121,7 +157,7 @@ async function startJob({ tabId, mode, channel, maxChars, messageType, tone, goa
 
   running.add(profileKey);
   await saveJob(job);
-  const run = runJob(job, licenseKey).catch(() => {}); // runJob records its own errors on the job
+  const run = runJob(job).catch(() => {}); // runJob records its own errors on the job
   runs.set(profileKey, run);
   run.then(() => { if (runs.get(profileKey) === run) runs.delete(profileKey); });
   return { ok: true, profileKey };
@@ -166,17 +202,18 @@ async function inpageWrite({ tabId, channel, maxChars }) {
       // Your goal for this person, if you set one in the panel for this kind
       // of message; else what the tracker says comes next ("they accepted").
       goal:        (job && job.channel === channel && job.goal) || (next && next.goal) || '',
-      regenerate:  !!(job && job.profile)
+      regenerate:  !!(job && job.profile), // reuse what was read; not a "New version"
+      variant:     0
     });
-    if (!started.ok && started.code === 'no_key') {
-      return { ...started, error: 'Add your Ark license key first: click the Ark icon in the toolbar, then Settings.' };
-    }
     if (!started.ok) return started;
     await whileRunning(profileKey);
     job = await getJob(profileKey);
     if (!job || job.step !== 'done') {
       const error = job && job.error;
-      return { ok: false, error: (error && error.message) || 'Could not write it. Please try again.', code: error && error.code };
+      // On linkedin.com, "Settings" would read as LinkedIn's own settings.
+      const message = ((error && error.message) || 'Could not write it. Please try again.')
+        .replace('in Settings', "in the extension's Settings (click its icon in Chrome's toolbar)");
+      return { ok: false, error: message, code: error && error.code };
     }
   }
 
@@ -189,7 +226,9 @@ async function inpageWrite({ tabId, channel, maxChars }) {
     message: fit ? fit.text : draft,
     reused,
     limit,
-    fit:     fit && { changed: fit.changed, fits: fit.fits, removed: fit.removed.length }
+    fit:     fit && { changed: fit.changed, fits: fit.fits, removed: fit.removed.length },
+    // The bar says so, as the side panel does: you may never open the panel.
+    resumeSkipped: !!job.resumeSkipped
   };
 }
 
@@ -206,49 +245,13 @@ async function recordNoteUsed(profileKey) {
   if (!profiles.includes(profileKey)) await chrome.storage.local.set({ noteUsage: { month, profiles: [...profiles, profileKey] } });
 }
 
-// ─── Telling the writer where the message goes ───────────────────────────────
-// Ark's server has no field yet for "this is a 200-character connection
-// note". Until it does (see docs/API-PROPOSAL.md), we pass that only inside
-// fields the server already reads, and never add new top-level fields that a
-// strict request check could reject:
-//   - Quick Mode: one clearly marked line at the end of the bio, plus
-//     profileData.outreachContext
-//   - Deep Mode:  enrichmentJSON.outreachContext (the server's own object,
-//     which the extension already sends back)
-// The panel's length meter and "Fit" button are the safety net either way.
-function outreachContext(job) {
-  return {
-    channel:      job.channel,
-    maxChars:     job.maxChars,
-    commonGround: job.useCommonGround || [],
-    goal:         job.goal || '',
-    instructions: contextLines(job).join(' ')
-  };
-}
-
-function contextLines(job) {
-  const lines = [];
-  if (job.maxChars) {
-    // Models overshoot character counts, so ask for ~15% under the real limit.
-    const target = Math.floor(job.maxChars * 0.85);
-    lines.push(job.channel === 'note'
-      ? `[Message format: LinkedIn connection note. Keep it under ${target} characters (hard limit ${job.maxChars}, including spaces). No sign-off.]`
-      : `[Message format: LinkedIn message to a connection. Keep it under ${job.maxChars} characters.]`);
-  }
-  if (job.useCommonGround && job.useCommonGround.length) {
-    lines.push(`[Shared with the recipient, mention one naturally: ${job.useCommonGround.join('; ')}.]`);
-  }
-  if (job.goal) lines.push(`[Sender's goal: ${job.goal}]`);
-  return lines;
-}
-
 function firstStep(job) {
   if (!job.profile) return 'reading';
   if (job.mode === 'deep' && !job.enrichmentJSON) return 'enriching';
   return 'writing';
 }
 
-async function runJob(job, licenseKey) {
+async function runJob(job) {
   // Chrome stops a worker that is idle for 30s. Calling an extension API
   // (here: saving the job) resets that timer, and the heartbeat also tells
   // the panel the run is still alive.
@@ -263,6 +266,7 @@ async function runJob(job, licenseKey) {
     await saveJob(job);
   };
 
+  let apiKey = ''; // the key this run used (if a 401 comes back, it is this key)
   try {
     if (!job.profile) {
       await setStep(job, 'reading');
@@ -279,51 +283,44 @@ async function runJob(job, licenseKey) {
       ? job.useCommonGround.filter(h => hooks.includes(h))
       : CommonGround.defaultPick(job.commonGround);
 
-    const settings = await getSettings();
-    let result;
-
-    if (job.mode === 'deep') {
-      if (!job.enrichmentJSON) {
-        await setStep(job, 'enriching');
-        const enriched = await callServer('/api/generate/enrich', { key: licenseKey, rawProfileData: job.profile }, TIMEOUT_MS.enrich);
-        if (!enriched.success) throw new Error(enriched.error || 'Enrichment failed.');
-        job.profileJSON    = enriched.profileJSON;
-        job.enrichmentJSON = enriched.enrichmentJSON;
-      }
-      await setStep(job, 'writing');
-      result = await callServer('/api/generate/deep', {
-        key:            licenseKey,
-        profileJSON:    job.profileJSON,
-        enrichmentJSON: {
-          ...job.enrichmentJSON,
-          // Common ground goes first: it is the strongest hook there is.
-          topHooks: [...new Set([...(job.useCommonGround || []), ...((job.enrichmentJSON && job.enrichmentJSON.topHooks) || [])])],
-          outreachContext: outreachContext(job)
-        },
-        messageType:    job.messageType,
-        tone:           job.tone,
-        resumeBase64:   settings.resumeBase64 || null
-      }, TIMEOUT_MS.deep);
-    } else {
-      await setStep(job, 'writing');
-      result = await callServer('/api/generate/quick', {
-        key:          licenseKey,
-        profileData:  { ...job.profile, outreachContext: outreachContext(job) },
-        messageType:  job.messageType,
-        tone:         job.tone,
-        userName:     settings.userName,
-        userBio:      [settings.userBio, contextLines(job).join('\n')].filter(Boolean).join('\n\n'),
-        resumeBase64: settings.resumeBase64 || null
-      }, TIMEOUT_MS.quick);
+    // Talking points from the profile. Deep Mode shows them first (as Ark's
+    // 3.1.0 does); both modes give them to the writer.
+    if (job.mode === 'deep' && !job.enrichmentJSON) {
+      await setStep(job, 'enriching');
+      job.enrichmentJSON = { topHooks: Writer.hooks(job.profile), companyNews: [] };
     }
+    const points = (job.enrichmentJSON && job.enrichmentJSON.topHooks) || Writer.hooks(job.profile);
 
-    if (!result.success) throw new Error(result.error || 'Generation failed.');
-    job.message   = result.message;
+    await setStep(job, 'writing');
+    const settings = await getSettings();
+    apiKey = String(settings.userApiKey || '').trim();
+    const brief = {
+      profile:      job.profile,
+      channel:      job.channel,
+      maxChars:     job.maxChars,
+      messageType:  job.messageType,
+      tone:         job.tone,
+      goal:         job.goal,
+      commonGround: job.useCommonGround || [],
+      hooks:        points,
+      sender:       { userName: settings.userName, userBio: settings.userBio },
+      variant:      job.variant || 0
+    };
+    if (apiKey) {
+      // The resume goes to Anthropic only if you said yes in Settings. (3.1.0
+      // kept a resume but never sent it, so an update must not start to.)
+      const resume = settings.resumeForAI === true && settings.resumeBase64 ? settings.resumeBase64 : null;
+      const out = await writeWithClaude(apiKey, brief, resume);
+      job.message       = out.text;
+      job.resumeSkipped = out.resumeSkipped;
+    } else {
+      job.message = Writer.local(brief);
+    }
+    job.writer    = apiKey ? 'ai' : 'free';
     job.messageId = Date.now();
-    job.remaining = result.remaining;
     // Bookkeeping first, so "done" really means done.
     await saveToTracker(job).catch(() => {});
-    await noteRemaining(result.remaining).catch(() => {});
+    if (apiKey && await isSavedKey(apiKey)) await noteKeyWorks(apiKey).catch(() => {});
     job.step       = 'done';
     job.finishedAt = Date.now();
     await end();
@@ -331,9 +328,46 @@ async function runJob(job, licenseKey) {
     job.failedStep = job.step;
     job.step       = 'error';
     job.error      = { message: err.message, code: err.code || null };
-    if (err.code === 'http_401' || err.code === 'http_403') await noteKeyRejected(err.message).catch(() => {});
+    // Only about the key you have now: a slow run with your old key must not
+    // mark (or clear) the key you pasted since.
+    if (KEY_PROBLEMS.has(err.code) && await isSavedKey(apiKey)) await noteKeyRejected(err.message, apiKey, err.code).catch(() => {});
     await end();
   }
+}
+
+// AI Mode: Claude writes it, with the user's own key. Instructions go in the
+// system prompt; the profile goes in the message, marked as someone else's
+// text. The resume (only if you turned that on) goes first, as a PDF.
+async function writeWithClaude(apiKey, brief, resumeBase64) {
+  const write = async (resume) => {
+    const { system, user } = Writer.prompt({ ...brief, hasResume: !!resume });
+    const content = [];
+    if (resume) {
+      content.push({ type: 'document', title: 'My resume (the sender)', source: { type: 'base64', media_type: 'application/pdf', data: resume } });
+    }
+    content.push({ type: 'text', text: user });
+    const timeoutMs = AI_TIMEOUT_MS + (resume ? RESUME_EXTRA_MS : 0);
+    return Writer.cleanReply(await callClaude(apiKey, { system, content, maxTokens: 1024, timeoutMs }));
+  };
+
+  let text;
+  let resumeSkipped = false;
+  try {
+    text = await write(resumeBase64);
+  } catch (err) {
+    // A resume makes every request bigger, so on a slow connection it can
+    // be what runs out the time limit. Say so.
+    if (resumeBase64 && err.code === 'timeout') {
+      throw claudeError(`${err.message.replace(/ Please try again\.$/, '')} Your resume is sent with each message, which makes it slower: try again, or untick "Use my resume in AI Mode" in Settings.`, 'timeout');
+    }
+    // Anthropic reads only standard PDFs (no password, not a renamed file).
+    // If it refuses the request because of the resume, write it without.
+    if (!resumeBase64 || !['bad_request', 'too_large'].includes(err.code)) throw err;
+    text = await write(null);
+    resumeSkipped = true;
+  }
+  if (!text) throw claudeError('Claude sent back an empty message. Please try again.', 'empty');
+  return { text, resumeSkipped };
 }
 
 const jobId = (profileKey) => `job:${profileKey}`;
@@ -372,7 +406,7 @@ async function markInterruptedJobs() {
 
 // Saved here, not in the panel, so it happens even if the panel is closed.
 async function saveToTracker(job) {
-  const p = job.profileJSON || job.profile || {};
+  const p = job.profile || {};
   await Tracker.saveDraft({
     profileKey:  job.profileKey,
     profileUrl:  job.profileUrl,
@@ -428,7 +462,8 @@ async function syncStatusFromPage(profileKey, relationship) {
 }
 
 // Your own profile, read once from your LinkedIn page, for common ground.
-// Saved only in this browser (chrome.storage.local), never sent anywhere.
+// Saved only in this browser (chrome.storage.local). In AI Mode, the common
+// ground found with it ("We both studied at …") goes into the prompt.
 async function importMyProfile({ tabId }) {
   try {
     const tab        = await getTab(tabId);
@@ -461,88 +496,166 @@ function getTab(tabId) {
   return chrome.tabs.get(tabId).catch(() => null);
 }
 
-// ─── License key ──────────────────────────────────────────────────────────────
-async function handleValidateKey({ key }, sendResponse) {
+// ─── Your own Anthropic key (AI Mode) ────────────────────────────────────────
+// "Test" sends a tiny real request, so a key with no credit left is caught
+// too (a cheaper check of the key alone would pass it).
+async function testApiKey({ apiKey }) {
+  const key = String(apiKey || '').trim();
+  if (!key) return { valid: false, reason: 'Paste your key first.', code: 'empty' };
   try {
-    const data = await callServer('/api/validate', { key }, TIMEOUT_MS.validate);
-    sendResponse(data);
+    await callClaude(key, { content: 'Reply with the single word: OK', maxTokens: 16 });
+    // Only for the saved key. A new key that works is saved by the panel,
+    // with its status, if the panel is still open and the box still holds it.
+    if (await isSavedKey(key)) await noteKeyWorks(key).catch(() => {});
+    return { valid: true };
   } catch (err) {
-    sendResponse({ valid: false, reason: err.message, code: err.code });
+    // A failed test of the saved key also changes the badge ("Key not
+    // working"…). A new key that fails is not saved yet: the panel remembers
+    // the failure, for when you press Save.
+    if (KEY_PROBLEMS.has(err.code) && await isSavedKey(key)) await noteKeyRejected(err.message, key, err.code).catch(() => {});
+    return { valid: false, reason: err.message, code: err.code || null };
   }
 }
 
-// Keep the panel's key badge honest after each generation.
-async function noteKeyRejected(reason) {
-  const key = await getStoredKey();
-  await chrome.storage.local.set({ keyStatus: { key, state: 'invalid', reason, checkedAt: Date.now() } });
+// Failures that mean AI Mode cannot work with this key until you act: a
+// refused key, no credit, a spend limit, a key with a character that cannot
+// be in a key, or a key that cannot use the model. ("Busy" or "no internet"
+// says nothing about the key.)
+const KEY_PROBLEMS = new Set(['auth', 'billing', 'spend_limit', 'bad_key', 'model']);
+
+// Never throws: if storage cannot be read, the key is treated as not saved
+// (nothing is marked), and the run still ends normally.
+async function isSavedKey(key) {
+  try {
+    const { userApiKey } = await chrome.storage.local.get('userApiKey');
+    return !!key && String(userApiKey || '').trim() === String(key).trim();
+  } catch (_) {
+    return false;
+  }
 }
 
-async function noteRemaining(remaining) {
-  if (remaining === undefined || remaining === null) return;
-  const { keyStatus } = await chrome.storage.local.get('keyStatus');
-  if (!keyStatus || keyStatus.state !== 'valid') return;
-  await chrome.storage.local.set({ keyStatus: { ...keyStatus, remaining } });
+// The panel's badge: "AI Mode", or what stops it ("Key not working",
+// "Billing problem", "Spend limit reached", "AI Mode not available") with
+// the reason. Only the key's last 8 characters are kept here, to know which
+// key it is about. (Anthropic keys end in "AA", so 4 were too few.) The
+// panel uses the same length.
+const keyTail = (key) => String(key || '').trim().slice(-8);
+
+async function noteKeyWorks(key) {
+  await chrome.storage.local.set({ keyStatus: { state: 'ai', keyTail: keyTail(key), checkedAt: Date.now() } });
 }
 
-// ─── Server calls ─────────────────────────────────────────────────────────────
-// One place for every request: a time limit, safe JSON reading, and
-// error messages a student can understand (never "Unexpected token <").
-async function callServer(path, body, timeoutMs) {
+// `key` is the key the failed request used. Callers check first that it is
+// still the saved key (you may have pasted another one in the meantime).
+async function noteKeyRejected(reason, key, code) {
+  await chrome.storage.local.set({ keyStatus: { state: 'invalid', keyTail: keyTail(key), reason, code: code || null, checkedAt: Date.now() } });
+}
+
+// ─── Calling Claude ──────────────────────────────────────────────────────────
+// One place for every request: a time limit, safe JSON reading, and error
+// messages a student can understand. Called straight from the extension with
+// the user's own key; the extra header tells Anthropic that is intended.
+async function callClaude(apiKey, { system, content, maxTokens, timeoutMs = AI_TIMEOUT_MS }) {
+  // A key can only hold plain characters. A curly quote or an invisible space
+  // from copying would make the request fail before it is sent, and look
+  // like "no internet".
+  if (!/^[!-~]+$/.test(apiKey)) {
+    throw claudeError('Your key has a character that cannot be in a key (often a curly quote or an invisible space from copying). Copy it again from console.anthropic.com.', 'bad_key');
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const body = {
+    model:      ANTHROPIC_MODEL,
+    max_tokens: maxTokens,
+    messages:   [{ role: 'user', content }]
+  };
+  // A short note needs no long thinking, and thinking would use up
+  // max_tokens (3.1.0's 400-token messages could come back cut off).
+  if (ANTHROPIC_THINKING) body.thinking = ANTHROPIC_THINKING;
+  if (system) body.system = system;
+
   let res;
   let text;
   try {
-    res = await fetch(`${SERVER_URL}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+    res = await fetch(ANTHROPIC_URL, {
+      method:  'POST',
+      headers: {
+        'content-type':      'application/json',
+        'x-api-key':         apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body:   JSON.stringify(body),
       signal: controller.signal
     });
     text = await res.text();
   } catch (err) {
     if (err && err.name === 'AbortError') {
-      throw serverError(`The server took too long (over ${Math.round(timeoutMs / 1000)}s). Please try again.`, 'timeout');
+      throw claudeError(`Claude took too long (over ${Math.round(timeoutMs / 1000)}s). Please try again.`, 'timeout');
     }
-    throw serverError('Could not reach the server. Check your internet connection.', 'offline');
+    throw claudeError('Could not reach Anthropic. Check your internet connection.', 'offline');
   } finally {
     clearTimeout(timer);
   }
 
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch (_) { data = null; }
-
-  if (!res.ok) throw serverError(friendlyHttpError(res.status, data), `http_${res.status}`);
-  if (!data || typeof data !== 'object') {
-    throw serverError('The server sent an unexpected reply. Please try again.', 'bad_response');
+  if (!res.ok) {
+    const [message, code] = friendlyClaudeError(res.status, data);
+    throw claudeError(message, code);
   }
-  return data;
+  if (!data || typeof data !== 'object' || !Array.isArray(data.content)) {
+    throw claudeError('Anthropic sent an unexpected reply. Please try again.', 'bad_response');
+  }
+  if (data.stop_reason === 'refusal') {
+    throw claudeError('Claude declined to write this one. Try again, or remove your key in Settings to use Free Mode.', 'refusal');
+  }
+  const out = data.content.filter(b => b && b.type === 'text').map(b => b.text).join('').trim();
+  if (!out && data.stop_reason === 'max_tokens') {
+    throw claudeError('Claude stopped before it finished. Please try again.', 'max_tokens');
+  }
+  return out;
 }
 
-function friendlyHttpError(status, data) {
-  const reason = data && (data.error || data.reason);
-  if (status >= 500) return 'The server is having trouble right now. Please try again in a minute.';
-  if (status === 429) return reason || 'Daily limit reached. It resets tomorrow.';
-  if (status === 401 || status === 403) return reason || 'Your license key was not accepted. Check it in Settings.';
-  return reason || `The request failed (error ${status}). Please try again.`;
+// [message, code]. Anthropic's own reason is passed on wherever "try again"
+// would not help (a billing problem, a spend limit, a refused request).
+function friendlyClaudeError(status, data) {
+  const error  = (data && data.error) || {};
+  const reason = typeof error.message === 'string' ? error.message : '';
+  if (status === 401 && /^CORS requests are not allowed/i.test(reason)) {
+    return ['Your Anthropic organization does not allow calls from a browser extension. Use a key from a personal account at console.anthropic.com, or remove the key to use Free Mode.', 'auth'];
+  }
+  if (status === 401) return ['Your Anthropic API key was not accepted. Check it in Settings, or remove it to use Free Mode.', 'auth'];
+  if (status === 402) {
+    return [`Anthropic could not bill your account${reason ? `: ${reason}` : '.'} Check Plans & Billing at console.anthropic.com, or remove your key to use Free Mode.`, 'billing'];
+  }
+  if (status === 403) return [`Your Anthropic key is not allowed to do this${reason ? `: ${reason}` : '.'}`, 'auth'];
+  if (status === 404) return [`Your Anthropic account cannot use the model ${ANTHROPIC_MODEL}. Remove your key to use Free Mode, or update the extension.`, 'model'];
+  if (status === 413) return ['The request was too large for Anthropic (often a large resume PDF).', 'too_large'];
+  if (status === 429 && error.details && error.details.error_code === 'enforced_spend_limit_reached') {
+    return [`Anthropic said: ${reason || 'your spend limit is reached.'}`, 'spend_limit'];
+  }
+  if (status === 429) return ['Too many requests to Anthropic right now. Wait a minute, then try again.', 'rate_limit'];
+  if (status === 529 || status >= 500) return ['Anthropic is busy right now. Please try again in a minute.', 'busy'];
+  // No credit left comes back as a 400: "Your credit balance is too low…".
+  if (status === 400 && /credit balance/i.test(reason)) {
+    return [`Anthropic said: ${reason} Or remove your key to use Free Mode.`, 'billing'];
+  }
+  if (status === 400 && reason) return [`Anthropic said: ${reason}`, 'bad_request'];
+  if (status >= 400 && status < 500 && reason) return [`Anthropic said: ${reason}`, `http_${status}`];
+  return [`The request to Anthropic failed (error ${status}). Please try again.`, `http_${status}`];
 }
 
-function serverError(message, code) {
+function claudeError(message, code) {
   const err = new Error(message);
   err.code = code;
   return err;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function getStoredKey() {
-  return new Promise(resolve => {
-    chrome.storage.local.get(['licenseKey'], result => resolve(result.licenseKey || ''));
-  });
-}
-
 function getSettings() {
   return new Promise(resolve => {
-    chrome.storage.local.get(['userName', 'userBio', 'resumeBase64'], resolve);
+    chrome.storage.local.get(['userName', 'userBio', 'resumeBase64', 'resumeForAI', 'userApiKey'], resolve);
   });
 }
 

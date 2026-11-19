@@ -12,7 +12,7 @@ const STEP_ORDER    = { quick: ['reading', 'writing'], deep: ['reading', 'enrich
 const STALE_MS      = 60 * 1000; // no heartbeat for this long = the run died
 const STEP_TEXT     = {
   reading:   'Reading the profile…',
-  enriching: 'Finding talking points — about 20 seconds…',
+  enriching: 'Finding talking points…',
   writing:   'Writing your message…'
 };
 
@@ -30,6 +30,14 @@ let myProfile      = null;   // your own LinkedIn profile, for common ground
 let sender         = {};     // your name and bio, for the message check
 let contact        = null;   // this person's entry in your tracker, if any
 let trackerFilter  = 'all';
+let failedTest     = null;   // { key, reason, code }: the key Test last failed with (not saved yet)
+// Test results that mean AI Mode cannot work with the key until you act (as
+// in background.js). The header says which; the key itself may be fine.
+const KEY_PROBLEMS   = ['auth', 'billing', 'spend_limit', 'bad_key', 'model'];
+const INVALID_LABELS = { billing: 'Billing problem', spend_limit: 'Spend limit reached', model: 'AI Mode not available' };
+// The last 8 characters of a key: enough to tell keys apart, not enough to
+// use one. (The same length as in background.js.)
+const keyTail = (key) => String(key || '').trim().slice(-8);
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -47,62 +55,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   await refreshActiveTab();
   await loadSettings();
   await renderTracker();
-  await checkLicenseStatus();
+  await renderMode();
 });
 
-// ─── License key status in header ────────────────────────────────────────────
-// The badge shows what the server says about the key, not just whether one
-// is saved. The answer is cached for 10 minutes per key.
-const KEY_STATUS_TTL_MS = 10 * 60 * 1000;
-const UNVERIFIED_CODES  = /^(offline|timeout|bad_response|http_5\d\d)$/;
-
-async function checkLicenseStatus() {
+// ─── Free Mode or AI Mode, in the header ─────────────────────────────────────
+// No key: Free Mode (a template, on this device, free). Your own Anthropic
+// key: AI Mode (Claude writes it). If Anthropic refused that key last time,
+// the badge says so, with the reason. Nothing is checked over the network
+// just to draw the badge.
+async function renderMode() {
   const s   = await loadStoredSettings();
-  const key = (s.licenseKey || '').trim();
-  if (!key) { renderKeyStatus({ state: 'none' }); return; }
-
+  const key = (s.userApiKey || '').trim();
   const { keyStatus } = await storageGet(['keyStatus']);
-  const fresh = keyStatus && keyStatus.key === key && Date.now() - keyStatus.checkedAt < KEY_STATUS_TTL_MS;
-  if (fresh) { renderKeyStatus(keyStatus); return; }
-
-  renderKeyStatus({ state: 'checking' });
-  const status = toKeyStatus(key, await validateKeyWithServer(key));
-  if (status.state !== 'unverified') await storageSet({ keyStatus: status });
-  renderKeyStatus(status);
-}
-
-function validateKeyWithServer(key) {
-  return new Promise(resolve => {
-    chrome.runtime.sendMessage({ type: 'VALIDATE_KEY', payload: { key } }, (res) => {
-      if (chrome.runtime.lastError) resolve({ valid: false, reason: chrome.runtime.lastError.message, code: 'offline' });
-      else resolve(res);
-    });
-  });
-}
-
-function toKeyStatus(key, result) {
-  const checkedAt = Date.now();
-  if (result && result.valid) return { key, state: 'valid', remaining: result.remaining, checkedAt };
-  if (!result || UNVERIFIED_CODES.test(result.code || '')) {
-    return { key, state: 'unverified', reason: (result && result.reason) || 'No answer from the server.', checkedAt };
-  }
-  return { key, state: 'invalid', reason: result.reason || 'Invalid key.', checkedAt };
+  const refused = !!key && !!keyStatus && keyStatus.state === 'invalid' && keyStatus.keyTail === keyTail(key);
+  renderKeyStatus(!key ? { state: 'free' } : refused ? keyStatus : { state: 'ai' });
 }
 
 function renderKeyStatus(st) {
-  const hasCount = st.remaining !== undefined && st.remaining !== null && st.remaining !== '';
   const views = {
-    none:       { text: 'No Key',       cls: 'inactive',   warn: 'No license key found. Add yours in the Settings tab.' },
-    checking:   { text: 'Checking…',    cls: 'checking',   warn: null },
-    valid:      { text: hasCount ? `● ${st.remaining} left today` : '● Active', cls: 'active', warn: null },
-    invalid:    { text: 'Invalid key',  cls: 'inactive',   warn: `Key not accepted: ${st.reason} Check it in Settings.` },
-    unverified: { text: 'Not verified', cls: 'unverified', warn: null },
+    free:    { text: '● Free Mode',     cls: 'free',     title: 'No key: messages are written from a template on this device, for free.' },
+    ai:      { text: '● AI Mode',       cls: 'active',   title: 'Claude writes the messages, with your own Anthropic key.' },
+    invalid: { text: INVALID_LABELS[st.code] || 'Key not working', cls: 'inactive', title: '',
+               warn: st.reason || 'Your Anthropic API key was not accepted. Check it in Settings, or remove it to use Free Mode.' },
   };
-  const view  = views[st.state];
+  const view  = views[st.state] || views.free;
   const badge = document.getElementById('key-status');
   badge.textContent = view.text;
   badge.className   = `key-status ${view.cls}`;
-  badge.title       = st.state === 'unverified' ? `Could not check the key: ${st.reason}` : '';
+  badge.title       = view.title;
   document.getElementById('no-key-warning').classList.toggle('hidden', !view.warn);
   if (view.warn) document.getElementById('key-warning-text').textContent = view.warn;
 }
@@ -138,8 +118,8 @@ function setMode(mode) {
     btn.setAttribute('aria-checked', String(mode === m));
   }
   document.getElementById('mode-hint').textContent = mode === 'deep'
-    ? 'Slower (about 20s). Also finds company news and talking points.'
-    : 'Fast. Uses the profile page only.';
+    ? 'Shows the talking points it found first, then writes.'
+    : 'Writes straight away.';
   renderJob();
 }
 
@@ -176,7 +156,7 @@ async function renderChannelHint() {
   const used  = await notesUsedThisMonth();
   const total = Limits.FREE_NOTES_PER_MONTH;
   el.textContent = used < total - 1
-    ? `Up to 200 characters. Free plans get only a few notes a month (made here: ${used} of ~${total}).`
+    ? `Up to 200 characters. LinkedIn's free plan gives only a few notes a month (made here: ${used} of ~${total}).`
     : `Notes made here this month: ${used} of ~${total}. Running out? Connect without a note, then send a Message once they accept.`;
 }
 
@@ -209,7 +189,32 @@ function watchBrowser() {
       job = changes[id].newValue || null;
       renderJob();
     }
-    if (area === 'local' && changes.keyStatus && changes.keyStatus.newValue) renderKeyStatus(changes.keyStatus.newValue);
+    if (area === 'local' && (changes.keyStatus || changes.userApiKey)) renderMode();
+    // The key worked (a run, or a Test elsewhere): forget its failed Test.
+    const status = area === 'local' && changes.keyStatus && changes.keyStatus.newValue;
+    if (status && status.state === 'ai' && failedTest && keyTail(failedTest.key) === status.keyTail) failedTest = null;
+    // Settings changed in another window's panel: show the new values, so a
+    // Save here does not put the old ones back. (A box you are editing here
+    // keeps your edit.)
+    if (area === 'local' && changes.resumeForAI) document.getElementById('resume-for-ai').checked = changes.resumeForAI.newValue === true;
+    if (area === 'local') {
+      for (const [key, id] of [['userApiKey', 'api-key'], ['userName', 'user-name'], ['userBio', 'user-bio']]) {
+        if (!changes[key]) continue;
+        const box = document.getElementById(id);
+        if (box.value.trim() === String(changes[key].oldValue || '').trim()) box.value = changes[key].newValue || '';
+      }
+      const name = changes.resumeFileName && changes.resumeFileName.newValue;
+      const label = name || 'Click to upload or drag PDF here';
+      // (This panel's own Save or Remove already shows it.)
+      if (changes.resumeFileName && !pendingResume && document.getElementById('file-label').textContent !== label) {
+        document.getElementById('file-label').textContent = name || 'Click to upload or drag PDF here';
+        document.getElementById('file-upload-area').classList.toggle('has-file', !!name);
+        document.getElementById('remove-resume-btn').classList.toggle('hidden', !name);
+        const statusEl = document.getElementById('resume-status');
+        statusEl.textContent = name ? `${name} saved ✓` : '';
+        statusEl.className   = name ? 'resume-status success' : 'resume-status hidden';
+      }
+    }
     if (area === 'local' && changes.contacts) onContactsChanged(changes.contacts.newValue || {});
     if (area === 'local' && changes.myProfile) {
       myProfile = changes.myProfile.newValue || null;
@@ -303,13 +308,7 @@ function wireCurrentEvents() {
 async function handleGenerate({ regenerate = false } = {}) {
   if (!profileKey || isRunning(job)) return;
 
-  const s = await loadStoredSettings();
-  if (!s.licenseKey) {
-    showCurrentStatus('No license key. Add it in Settings.', 'error');
-    switchTab('settings');
-    return;
-  }
-
+  // No key needed: without one, Free Mode writes from a template.
   setBusy(true);
   const res = await sendMessage({
     type: 'START_JOB',
@@ -330,7 +329,6 @@ async function handleGenerate({ regenerate = false } = {}) {
   if (!res || !res.ok) {
     setBusy(false);
     showCurrentStatus((res && res.error) || 'Could not start. Please try again.', 'error');
-    if (res && res.code === 'no_key') switchTab('settings');
   }
   // From here on, progress arrives through storage changes (see watchBrowser).
 }
@@ -450,8 +448,9 @@ function renderJob() {
 }
 
 function doneText(j) {
-  const left = j.remaining !== undefined && j.remaining !== null ? ` ${j.remaining} left today.` : '';
-  return `Message ready.${left}`;
+  const how = { free: ' Written in Free Mode.', ai: ' Written by Claude.' }[j.writer] || '';
+  const resume = j.resumeSkipped ? ' Anthropic could not read your resume PDF, so it was left out. Replace or remove it in Settings.' : '';
+  return `Message ready.${how}${resume}`;
 }
 
 // Steps show progress while running, and where it failed. Once a run
@@ -621,12 +620,17 @@ async function handleRemoveMe() {
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function wireSettingsEvents() {
   document.getElementById('save-settings-btn').addEventListener('click', handleSaveSettings);
-  document.getElementById('validate-btn').addEventListener('click', handleValidateKey);
-  document.getElementById('license-key').addEventListener('keydown', e => {
-    if (e.key === 'Enter') handleValidateKey();
+  document.getElementById('validate-btn').addEventListener('click', handleTestKey);
+  document.getElementById('api-key').addEventListener('keydown', e => {
+    // Not while a Test is running (results could come back out of order).
+    if (e.key === 'Enter' && !document.getElementById('validate-btn').disabled) handleTestKey();
   });
   document.getElementById('import-me-btn').addEventListener('click', handleImportMe);
   document.getElementById('remove-me-btn').addEventListener('click', handleRemoveMe);
+  document.getElementById('remove-resume-btn').addEventListener('click', handleRemoveResume);
+  // Like Remove resume next to it, this applies at once (no Save needed):
+  // unticking it must stop the resume being sent straight away.
+  document.getElementById('resume-for-ai').addEventListener('change', handleResumeForAI);
   // The plan changes the note limit, so it applies at once (no Save needed).
   document.getElementById('linkedin-plan').addEventListener('change', async (e) => {
     linkedinPlan = e.target.value === 'premium' ? 'premium' : 'free';
@@ -648,6 +652,8 @@ function wireSettingsEvents() {
   });
   document.getElementById('resume-upload').addEventListener('change', (e) => {
     const file = e.target.files[0];
+    // Empty the picker, so picking the same file again (after Remove) still works.
+    e.target.value = '';
     if (file) processResumeFile(file);
   });
 }
@@ -656,9 +662,12 @@ async function loadSettings() {
   const s = await loadStoredSettings();
   document.getElementById('linkedin-plan').value = linkedinPlan;
   renderMeStatus();
-  if (s.licenseKey) document.getElementById('license-key').value = s.licenseKey;
+  if (s.userApiKey) document.getElementById('api-key').value = s.userApiKey;
   if (s.userName)   document.getElementById('user-name').value   = s.userName;
   if (s.userBio)    document.getElementById('user-bio').value    = s.userBio;
+  // Off unless you turned it on here (a resume kept from 3.1.0 was never
+  // sent anywhere, so it is not sent now either until you say yes).
+  document.getElementById('resume-for-ai').checked = s.resumeForAI === true;
   if (s.resumeFileName) {
     document.getElementById('file-label').textContent = s.resumeFileName;
     document.getElementById('file-upload-area').classList.add('has-file');
@@ -666,55 +675,123 @@ async function loadSettings() {
     statusEl.textContent = `${s.resumeFileName} saved ✓`;
     statusEl.className   = 'resume-status success';
     statusEl.classList.remove('hidden');
+    document.getElementById('remove-resume-btn').classList.remove('hidden');
   }
 }
 
 async function handleSaveSettings() {
-  const licenseKey = document.getElementById('license-key').value.trim().toUpperCase();
+  const userApiKey = document.getElementById('api-key').value.trim(); // keys are case-sensitive
   const userName   = document.getElementById('user-name').value.trim();
   const userBio    = document.getElementById('user-bio').value.trim();
 
-  const savePayload = { licenseKey, userName, userBio };
+  const savePayload = { userApiKey, userName, userBio };
   if (pendingResume) {
+    // A new file is saved with the box's choice for it. (For a resume that
+    // is already saved, the box saves itself, so Save leaves it alone: an
+    // older panel in another window must not turn it back on.)
     savePayload.resumeBase64   = pendingResume.base64;
     savePayload.resumeFileName = pendingResume.fileName;
+    savePayload.resumeForAI    = document.getElementById('resume-for-ai').checked;
     pendingResume = null;
     const statusEl = document.getElementById('resume-status');
     statusEl.textContent = 'Resume saved ✓';
     statusEl.className   = 'resume-status success';
+    document.getElementById('remove-resume-btn').classList.remove('hidden');
   }
   await new Promise(resolve => chrome.storage.local.set(savePayload, resolve));
-  showSettingsStatus('Settings saved!', 'success');
-  await checkLicenseStatus();
+  // An empty key field means Free Mode: forget what was known about the old key.
+  if (!userApiKey) await new Promise(resolve => chrome.storage.local.remove('keyStatus', resolve));
+  // You pressed Test, it failed, and now you save that same key: the header
+  // must not say "AI Mode" as if it works. Used once: from now on keyStatus
+  // keeps it, and the background clears it when the key works.
+  if (userApiKey && failedTest && failedTest.key === userApiKey) {
+    await storageSet({ keyStatus: { state: 'invalid', keyTail: keyTail(userApiKey), reason: failedTest.reason, code: failedTest.code, checkedAt: Date.now() } });
+  }
+  failedTest = null;
+
+  // An old "Test" result may not be true any more.
+  document.getElementById('key-validation-status').classList.add('hidden');
+  const { keyStatus } = await storageGet(['keyStatus']);
+  const stillRefused = !!userApiKey && !!keyStatus && keyStatus.state === 'invalid' && keyStatus.keyTail === keyTail(userApiKey);
+  if (!userApiKey)       showSettingsStatus('Settings saved! Free Mode is on (no key).', 'success');
+  else if (stillRefused) showSettingsStatus('Settings saved. AI Mode is still not working: press Test to check again.', 'error');
+  else                   showSettingsStatus('Settings saved! AI Mode is on.', 'success');
+  await renderMode();
 }
 
-async function handleValidateKey() {
-  const key = document.getElementById('license-key').value.trim().toUpperCase();
-  if (!key) return;
+async function handleResumeForAI(e) {
+  const { resumeFileName } = await storageGet(['resumeFileName']);
+  // Unticking always applies at once: sending less is always safe. (This
+  // holds even while a new PDF is picked but not saved yet.)
+  if (!e.target.checked) {
+    if (resumeFileName) await storageSet({ resumeForAI: false });
+    if (pendingResume) showSettingsStatus(`Saved: your resume will not be sent. Press Save Settings to keep ${pendingResume.fileName}.`, 'success');
+    else if (resumeFileName) showSettingsStatus('Saved: your resume will not be sent.', 'success');
+    return;
+  }
+  // Ticking with a picked file that is not saved yet: Save Settings stores
+  // the new file with this choice. (Saving the box now would turn on
+  // sending the OLD file.)
+  if (pendingResume) {
+    showSettingsStatus(`Press Save Settings to save ${pendingResume.fileName} with this choice.`, 'success');
+    return;
+  }
+  if (!resumeFileName) {
+    showSettingsStatus('Upload your resume, then press Save Settings.', 'success');
+    return;
+  }
+  await storageSet({ resumeForAI: true });
+  showSettingsStatus('Saved: AI Mode will send your resume with each message.', 'success');
+}
+
+async function handleRemoveResume() {
+  await new Promise(resolve => chrome.storage.local.remove(['resumeBase64', 'resumeFileName', 'resumeForAI'], resolve));
+  document.getElementById('resume-upload').value = '';
+  pendingResume = null;
+  document.getElementById('file-label').textContent = 'Click to upload or drag PDF here';
+  document.getElementById('file-upload-area').classList.remove('has-file');
+  document.getElementById('resume-status').classList.add('hidden');
+  document.getElementById('resume-for-ai').checked = false;
+  document.getElementById('remove-resume-btn').classList.add('hidden');
+  showSettingsStatus('Resume removed.', 'success');
+}
+
+// "Test" sends one tiny request to Anthropic with the key. A working key is
+// saved at once, so AI Mode starts right away.
+async function handleTestKey() {
+  const apiKey = document.getElementById('api-key').value.trim();
+  const el = document.getElementById('key-validation-status');
+  if (!apiKey) {
+    el.textContent = 'Paste your Anthropic API key first. Leave it empty to use Free Mode.';
+    el.className   = 'key-validation-status invalid';
+    return;
+  }
 
   const btn = document.getElementById('validate-btn');
   btn.textContent = '…';
   btn.disabled = true;
-
-  const result = await validateKeyWithServer(key);
-  const status = toKeyStatus(key, result);
-
-  btn.textContent = 'Verify';
+  const result = await sendMessage({ type: 'TEST_API_KEY', payload: { apiKey } });
+  btn.textContent = 'Test';
   btn.disabled = false;
 
-  const el = document.getElementById('key-validation-status');
-  el.classList.remove('hidden');
+  // You changed the key while the test ran: this result is about another
+  // key, so it is not used (and that key is not saved).
+  if (document.getElementById('api-key').value.trim() !== apiKey) return;
 
-  if (status.state === 'valid') {
-    el.textContent = `✓ Valid key — ${result.remaining} messages remaining today`;
+  if (result && result.valid) {
+    failedTest = null;
+    el.textContent = '✓ Key works. AI Mode is on.';
     el.className   = 'key-validation-status valid';
-    // Auto-save the key, with the fresh status so the header needs no second check.
-    const s = await loadStoredSettings();
-    await storageSet({ ...s, licenseKey: key, keyStatus: status });
-    await checkLicenseStatus();
+    await storageSet({ userApiKey: apiKey, keyStatus: { state: 'ai', keyTail: keyTail(apiKey), checkedAt: Date.now() } });
+    await renderMode();
   } else {
-    el.textContent = `✗ ${status.reason}`;
+    const reason = (result && result.reason) || 'The key did not work.';
+    // Remembered for Save (see handleSaveSettings). "Busy" or "no internet"
+    // says nothing about the key, so it is not remembered.
+    failedTest = result && KEY_PROBLEMS.includes(result.code) ? { key: apiKey, reason, code: result.code } : null;
+    el.textContent = `✗ ${reason}`;
     el.className   = 'key-validation-status invalid';
+    await renderMode();
   }
 }
 
@@ -1035,7 +1112,7 @@ function processResumeFile(file) {
 
 function loadStoredSettings() {
   return new Promise(resolve => {
-    chrome.storage.local.get(['licenseKey','userName','userBio','resumeBase64','resumeFileName'], resolve);
+    chrome.storage.local.get(['userApiKey','userName','userBio','resumeBase64','resumeFileName','resumeForAI'], resolve);
   });
 }
 
@@ -1047,6 +1124,8 @@ function storageSet(items) {
   return new Promise(resolve => chrome.storage.local.set(items, resolve));
 }
 
+// Also escapes quotes: names go into attributes too (aria-label="…"), and a
+// name with a " must not be able to add attributes of its own.
 function esc(str) {
-  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }

@@ -43,7 +43,9 @@ if (!globalThis.__arkInpage) {
     const clean      = (s) => String(s || '').replace(/\s+/g, ' ').trim();
     const squash     = (s) => String(s || '').replace(/\s+/g, '');
     const norm       = (s) => clean(String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\s]/gu, ' ')).toLowerCase();
-    const firstName  = (name) => clean(name).split(' ')[0] || '';
+    // The writer's own rule (utils/writer.js loads first): no "Dr.", "S.K."
+    // or "(3)" in the button's label, the same name as in the note.
+    const firstName  = (name) => globalThis.Writer.firstName(name);
     const onProfile  = () => /^\/in\/[^/]+/.test(location.pathname);
     const samePerson = (a, b) => {
       const x = norm(a);
@@ -61,7 +63,7 @@ if (!globalThis.__arkInpage) {
     // Connect click. A plain "Connect" (no name in its label) is taken to be
     // for the profile that is open.
     let lastInvite = null; // { name, at }
-    document.addEventListener('click', (e) => {
+    function onClick(e) {
       for (const el of e.composedPath()) {
         if (!el || !el.getAttribute) continue;
         const label = clean(el.getAttribute('aria-label'));
@@ -73,7 +75,29 @@ if (!globalThis.__arkInpage) {
           return;
         }
       }
-    }, true);
+    }
+    document.addEventListener('click', onClick, true);
+
+    // ── After Ark is updated ───────────────────────────────────────────────
+    // When Ark is updated while this page stays open, Chrome keeps this old
+    // copy running but cuts it off (chrome.runtime.id is gone), and starts
+    // the new copy in a fresh world. The old copy then takes its bars away,
+    // stops watching, and leaves the page to the new copy. (Before, the two
+    // copies kept replacing each other's bar.)
+    const observers = [];
+    const myHosts   = new Set();
+    let stopped     = false;
+    const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(timer);
+      observers.forEach((o) => o.disconnect());
+      document.removeEventListener('focusin', schedule, true);
+      document.removeEventListener('click', onClick, true);
+      myHosts.forEach((h) => h.remove());
+      myHosts.clear();
+    }
 
     // ── Finding LinkedIn's boxes ───────────────────────────────────────────
     function roots() {
@@ -148,6 +172,7 @@ if (!globalThis.__arkInpage) {
 
       host = document.createElement('div');
       host.setAttribute(ATTR, box.kind);
+      myHosts.add(host);
       const shadow = host.attachShadow({ mode: 'open' });
       shadow.innerHTML = `<style>${CSS}</style>
         <div class="bar">
@@ -173,8 +198,11 @@ if (!globalThis.__arkInpage) {
         msg:       null, // [text, tone] after the last click
         before:    null  // what the box held before Ark wrote (for Undo)
       };
-      ui.write.addEventListener('click', () => write(ui));
-      ui.undo.addEventListener('click', () => undo(ui));
+      // Only a real click (or Enter/Space) by you counts. A script in
+      // LinkedIn's page could call .click() on these buttons, and in AI Mode
+      // each write is a paid request on your key.
+      ui.write.addEventListener('click', (e) => { if (e.isTrusted) write(ui); });
+      ui.undo.addEventListener('click', (e) => { if (e.isTrusted) undo(ui); });
       bars.set(host, ui);
       place(box, host);
       return ui;
@@ -235,6 +263,13 @@ if (!globalThis.__arkInpage) {
     }
 
     function doneMessage(box, res) {
+      const [text, tone] = fitMessage(box, res);
+      // AI Mode could not read your resume PDF, so it wrote without it.
+      if (res.resumeSkipped) return [`Written without your resume: Anthropic could not read the PDF (replace or remove it in the extension's Settings). ${text}`, 'warn'];
+      return [text, tone];
+    }
+
+    function fitMessage(box, res) {
       if (box.kind !== 'note' || !res.limit) return ['Read it, then press Send.', 'ok'];
       const { fit } = res;
       if (fit && !fit.fits) {
@@ -316,18 +351,22 @@ if (!globalThis.__arkInpage) {
     function watch(root) {
       if (watched.has(root)) return;
       watched.add(root);
-      new MutationObserver(schedule).observe(root, {
+      const observer = new MutationObserver(schedule);
+      observer.observe(root, {
         childList: true, subtree: true, attributes: true,
         attributeFilter: ['open', 'hidden', 'style', 'class', 'aria-hidden']
       });
+      observers.push(observer);
     }
 
     function schedule() {
-      if (!timer) timer = setTimeout(scan, 200);
+      if (!timer && !stopped) timer = setTimeout(scan, 200);
     }
 
     function scan() {
       timer = null;
+      if (stopped) return;
+      if (!alive()) { stop(); return; } // an old copy after an update
       roots().forEach(watch);
       if (!onProfile()) {
         // Not on a profile (e.g. a chat left open while you browse): no bars.

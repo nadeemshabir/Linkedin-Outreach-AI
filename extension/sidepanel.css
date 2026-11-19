@@ -851,8 +851,7 @@ html.is-popup body {
   letter-spacing: .05em;
   color: var(--text);
   background: var(--surface);
-  text-transform: uppercase;
-  outline: none;
+  outline: none; /* no capitals: Anthropic keys are lower-case and case-sensitive */
 }
 
 .license-key-input:focus { border-color: var(--accent); }
@@ -890,10 +889,13 @@ html.is-popup body {
   margin-left: auto;
 }
 
-.key-status.active     { background: var(--success-bg); color: var(--success); }
-.key-status.inactive   { background: var(--error-bg);   color: var(--error); }
-.key-status.checking   { background: var(--bg);         color: var(--text-2); }
-.key-status.unverified { background: var(--warning-bg); color: var(--warning); }
+/* "Use my resume in AI Mode" */
+.check-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--text-2); line-height: 1.45; cursor: pointer; }
+.check-row input { margin-top: 2px; flex: none; }
+
+.key-status.active     { background: var(--success-bg); color: var(--success); }  /* AI Mode */
+.key-status.free       { background: var(--bg);         color: var(--text-2); }   /* Free Mode */
+.key-status.inactive   { background: var(--error-bg);   color: var(--error); }    /* key not working */
 
 /* Settings note */
 .settings-note {
@@ -902,6 +904,12 @@ html.is-popup body {
   text-align: center;
   margin-top: 8px;
   line-height: 1.5;
+}
+
+.settings-note-list {
+  text-align: left;
+  margin: 4px 0 0;
+  padding-left: 18px;
 }
 
 /* Alert warning variant */

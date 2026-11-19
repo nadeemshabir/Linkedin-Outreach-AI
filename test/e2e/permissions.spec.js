@@ -1,5 +1,7 @@
-// Proves the extension still works without the "tabs" permission (B10):
-// host permission for linkedin.com is enough to read LinkedIn tab URLs.
+// What the extension may reach. Its host access is LinkedIn, plus Anthropic's
+// API for AI Mode (the same as Ark's 3.1.0, so no new install warning). It
+// also proves the extension still works without the "tabs" permission (B10):
+// host access to linkedin.com is enough to read LinkedIn tab URLs.
 import { test, expect, serveLinkedInPage } from './extension.js';
 
 const PROFILE_URL = 'https://www.linkedin.com/in/test-person/';
@@ -9,6 +11,11 @@ const PAGE = `<!doctype html><html><head><title>Test Person | LinkedIn</title></
 test('manifest asks only for what it uses', async ({ serviceWorker }) => {
   const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
   expect(manifest.permissions).not.toContain('tabs');
+});
+
+test('host access is LinkedIn and Anthropic\'s API (for AI Mode), nothing else', async ({ serviceWorker }) => {
+  const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
+  expect([...manifest.host_permissions].sort()).toEqual(['https://api.anthropic.com/*', 'https://www.linkedin.com/*']);
 });
 
 test('LinkedIn tab URLs are still readable, other sites stay private', async ({ context, serviceWorker }) => {

@@ -1,14 +1,40 @@
 // A fake browser for tests. The REAL background and the REAL side panel talk
 // to each other through a fake chrome.* API, the way they do in Chrome.
-// LinkedIn pages and Ark's server are fakes that each test controls.
+// LinkedIn pages and Anthropic's API (AI Mode) are fakes each test controls.
+// With no `userApiKey` in storage, everything runs in Free Mode and nothing
+// is fetched at all.
 import { vi } from 'vitest';
 import { Window } from 'happy-dom';
 import { createFakeChrome } from './fake-chrome.js';
 import { runIsolated, read, pageScripts } from './load.js';
 
-export const SERVER  = 'https://linkedin-extention-production.up.railway.app';
-export const KEY     = 'ARK-TEST-0000-0000';
-export const RUNNING = ['reading', 'enriching', 'writing'];
+export const ANTHROPIC = 'https://api.anthropic.com';
+export const API_KEY   = 'sk-ant-test-0000'; // fake, for AI Mode tests
+export const RUNNING   = ['reading', 'enriching', 'writing'];
+
+/** A successful Messages API answer with this text. */
+export function claudeReply(text, extra = {}) {
+  return [200, {
+    id: 'msg_test', type: 'message', role: 'assistant', model: 'claude-haiku-5-5',
+    content: [{ type: 'text', text }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 10 }, ...extra,
+  }];
+}
+
+/** The text of the (last) user message in a Messages API request body. */
+export function promptText(body) {
+  const content = body && body.messages && body.messages[body.messages.length - 1].content;
+  if (typeof content === 'string') return content;
+  return (content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+}
+
+// Default fake Claude: "OK" for the key test, else a short note to the
+// first name found in the prompt's profile.
+function defaultClaude(body) {
+  const text = promptText(body);
+  if (/Reply with the single word: OK/.test(text)) return claudeReply('OK');
+  const name = (text.match(/"name":\s*"([^"]+)"/) || [])[1] || 'there';
+  return claudeReply(`Hi ${name.split(' ')[0]}! Would you be open to a quick chat?`);
+}
 
 export function person(slug, name, extra = {}) {
   return {
@@ -29,9 +55,9 @@ const abortError = () => Object.assign(new Error('The operation was aborted.'), 
  * @param {Array}    [o.tabs]     [{ id, url, active }]
  * @param {object}   [o.pages]    tabId → profile the content script returns
  * @param {object}   [o.pagesByUrl] url → profile, used when a tab navigates there
- * @param {Function} [o.server]   (path, body) → [status, json] | Response | 'hang'
+ * @param {Function} [o.claude]   Anthropic fake: (body, path) → [status, json] | Response | 'hang'
  */
-export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, pagesByUrl = {}, server = () => [404, {}] } = {}) {
+export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, pagesByUrl = {}, claude = defaultClaude } = {}) {
   const { chrome, dispatchMessage } = createFakeChrome({ local, session, tabs });
 
   chrome.tabs.query.mockImplementation(async (q = {}) =>
@@ -58,13 +84,14 @@ export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, p
     return reply;
   });
 
-  // Ark's server.
+  // Anthropic's API (AI Mode only). Nothing else may be fetched.
   const calls = [];
   const fetch = vi.fn(async (url, init = {}) => {
-    const path = url.replace(SERVER, '');
+    if (!String(url).startsWith(ANTHROPIC)) throw new Error(`Unexpected fetch: ${url}`);
+    const path = url.replace(ANTHROPIC, '');
     const body = init.body ? JSON.parse(init.body) : null;
-    calls.push({ path, body });
-    const out = await server(path, body);
+    calls.push({ path, body, headers: { ...(init.headers || {}) } });
+    const out = await claude(body, path);
     if (out === 'hang') {
       return new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(abortError())));
     }

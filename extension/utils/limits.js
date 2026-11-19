@@ -48,13 +48,51 @@ const Limits = (() => {
     /^(?:please )?(?:feel free to|don't hesitate to) (?:reach out|contact me)/i,
     /^i have attached my (?:cv|resume|résumé)/i, // you can't attach files to a note
   ];
-  const GREETING = /^((?:hi|hello|hey|dear)\b[^,\n.!?]{0,40}[,!]?)\s*/i;
+  // "Hi Aoife," "Dear Dr. Rao," "Hello Smt. Iyer," "Hi Aoife!" or "Hi Aoife"
+  // on its own line. A title's or an initial's dot does not end it. With no
+  // comma, "!" or line break after the name ("Hi Aoife — I loved…"), there is
+  // no greeting to keep apart, so Fit never cuts a word in two. (TITLES is
+  // the same as in writer.js; a test keeps the two the same.)
+  const TITLE_LIST = 'dr|prof|mr|mrs|ms|miss|mx|ca|cs|cma|er|eng|engr|ar|adv|sir|dame|rev|fr|hon|ing|capt|col|lt|maj|smt|shri|shree|sri|kum|md|mohd';
+  const TITLES = new RegExp(`^(${TITLE_LIST})\\.?$`, 'i');
+  const GREETING = new RegExp(`^((?:hi|hello|hey|dear)\\b(?:[^,\\n.!?]|(?<=\\b(?:${TITLE_LIST}|sr|jr|st|\\p{L}))\\.){0,40}(?:[,!]|(?=\\n)))\\s*`, 'iu');
   const SIGNOFF  = /\s*(?:\n|^|(?<=[.!?])\s)\s*(?:thanks|thank you|best|best regards|kind regards|warm regards|regards|cheers|sincerely)\b[^\n]{0,40}$/i;
   const ASK      = /\?|\b(?:would you|could you|can we|could we|are you open|would it be|happy to|open to|willing to|mind if)\b/i;
 
+  // A dot after an initial or a short word does not end a sentence: "J.P.",
+  // "U.S.", "Sr.", "Pvt.", "B.Tech.", "e.g.", or a list's "1.". The same rule
+  // as writer.js (a test keeps the two the same), so Fit never splits
+  // "…the Sr. Data Analyst role at J.P. Morgan?" into pieces.
+  const ABBREV = /(?:^|[^\p{L}\p{N}])(?:\p{L}|\d{1,2}|sr|jr|dr|prof|mr|mrs|ms|st|vs|etc|approx|incl|dept|prev|pvt|govt|univ|inst|engg|asst|assoc|mgr|e\.g|i\.e|b\.tech|m\.tech|b\.sc|m\.sc|b\.e|m\.e|b\.com|m\.com|b\.a|m\.a|ph\.d|m\.b\.a)\.$/iu;
+
+  // A sentence ends at . ! or ? before a space. A "." (alone, or with a
+  // closing quote or bracket after it: caught my eye: "…models." A bit about
+  // me…), and a "…" with a closing quote (Free Mode's cut quote), end it
+  // only before a capital letter, a number or a quote: in 'your post
+  // "…models." caught my eye.' and "from Infosys Ltd. to Spotify" the
+  // sentence goes on.
   function splitSentences(body) {
-    return body.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+    const out = [];
+    const end = /([.!?]+|…)(["'”’)\]]*)(?=\s+(\S))/gu;
+    let start = 0;
+    let m;
+    while ((m = end.exec(body))) {
+      const [all, mark, close, next] = m;
+      const stop = m.index + all.length;
+      if (mark === '…' && !close) continue;
+      if ((close || mark === '.') && !/^[\p{Lu}\p{N}"“'‘(]/u.test(next)) continue;
+      if (mark === '.' && ABBREV.test(body.slice(0, m.index + 1))) continue;
+      out.push(body.slice(start, stop));
+      start = stop;
+    }
+    out.push(body.slice(start));
+    return out.map(s => s.trim()).filter(Boolean);
   }
+
+  // After "Hi Aoife," the fitted text goes on in one line, so a common first
+  // word gets a small letter ("Hi Aoife, would you…"). "I" and names keep
+  // their capital.
+  const COMMON_START = /^(?:would|could|can|will|your|you|thanks|thank|congrats|congratulations|we|my|our|it|it['’]s|this|that|are|is|do|did|have|has|loved|enjoyed|saw|noticed|great|just|hope|as|since|if|when|happy|glad|also|a|an|the|quick|really|after)(?=[\s,!?.]|$)/i;
 
   // Specific sentences (names, numbers, places) matter more than generic ones.
   function specificity(sentence) {
@@ -79,7 +117,13 @@ const Limits = (() => {
 
     let sentences = splitSentences(rest.replace(/\s*\n\s*/g, ' '));
     const removed = [];
-    const build = () => [greeting, ...sentences, signoff].filter(Boolean).join(' ').replace(/\s+([,.!?])/g, '$1');
+    const build = () => {
+      const parts = [...sentences];
+      if (greeting.endsWith(',') && parts.length && COMMON_START.test(parts[0]) && /^\p{Lu}(?:\p{Ll}|\s|'|’|$)/u.test(parts[0])) {
+        parts[0] = parts[0][0].toLowerCase() + parts[0].slice(1);
+      }
+      return [greeting, ...parts, signoff].filter(Boolean).join(' ').replace(/\s+([,.!?])/g, '$1');
+    };
     const fits = () => build().length <= limit;
 
     // 1. Filler sentences.
@@ -109,5 +153,5 @@ const Limits = (() => {
     return { text: result, changed: result !== original, fits: result.length <= limit, removed };
   }
 
-  return { NOTE_LIMIT, MESSAGE_SUGGESTED, FREE_NOTES_PER_MONTH, limitFor, lengthState, monthKey, fitToLimit };
+  return { NOTE_LIMIT, MESSAGE_SUGGESTED, FREE_NOTES_PER_MONTH, ABBREV, TITLES, limitFor, lengthState, monthKey, fitToLimit };
 })();

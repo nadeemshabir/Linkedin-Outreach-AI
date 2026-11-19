@@ -66,7 +66,7 @@ export function createFakeChrome({ local = {}, session = {}, tabs = [] } = {}) {
       onInstalled: makeEvent(),
       onStartup: makeEvent(),
       getURL: (p) => `chrome-extension://test-extension-id/${p}`,
-      getManifest: () => ({ content_scripts: [{ js: ['scraper.js', 'content_script.js', 'inpage.js'] }] }),
+      getManifest: () => ({ content_scripts: [{ js: ['scraper.js', 'content_script.js', 'utils/writer.js', 'inpage.js'] }] }),
       getPlatformInfo: vi.fn(async () => ({ os: 'linux' })),
       // Replace in a test to fake answers from another extension context.
       sendMessage: vi.fn(),
