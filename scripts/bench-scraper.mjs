@@ -17,7 +17,7 @@ import { profilePage } from '../test/fixtures/linkedin-2026.js';
 import { PROFILES, truth } from '../test/fixtures/profiles.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const V3_SOURCE = execSync('git show f8f21ec:content_script.js', { cwd: ROOT, encoding: 'utf8' });
+const V3_SOURCE = execSync('git show e4af38f:content_script.js', { cwd: ROOT, encoding: 'utf8' });
 const V2_SOURCE = fs.readFileSync(path.join(ROOT, 'extension', 'scraper.js'), 'utf8');
 
 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
@@ -102,7 +102,7 @@ await browser.close();
 const table = (rows) => ['| Field | v3.0.2 | v2 |', '|---|---:|---:|', ...rows.map(r => `| ${r.field === 'Overall' ? '**Overall**' : r.field} | ${r.v3}% | ${r.v2}% |`)].join('\n');
 const report = `# Scraper benchmark
 
-The original v3.0.2 scraper (commit \`f8f21ec\`, run unchanged) against scraper v2, in real Chromium,
+The original v3.0.2 scraper (commit \`e4af38f\`, run unchanged) against scraper v2, in real Chromium,
 on ${PROFILES.length} made-up profiles built with the structure of LinkedIn's 2026 profile page
 (see \`test/fixtures/\`). Run it yourself: \`npm run bench\`.
 

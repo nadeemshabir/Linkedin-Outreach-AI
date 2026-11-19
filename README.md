@@ -2,7 +2,7 @@
 
 An improved version of Ark's LinkedIn outreach extension.
 **Not a rewrite:** same plain JavaScript, same Ark server and API, no framework.
-Commit [`f8f21ec`](../../commit/f8f21ec) is the original v3.0.2 exactly as received; every change after it is a small, tested commit.
+Commit [`e4af38f`](../../commit/e4af38f) is the original v3.0.2 exactly as received; every change after it is a small, tested commit.
 
 > In one line: v3 writes a message in a popup. v4 helps you get a reply — it reads today's LinkedIn correctly, writes straight into LinkedIn's own note box, never loses your work, knows LinkedIn's limits, checks the draft before you send it, and reminds you to follow up.
 
@@ -37,20 +37,20 @@ Bugs fixed, each with a test that failed before the fix:
 
 | # | Bug | Commit |
 |---|---|---|
-| B1 | Job titles like "**Mar**keting Manager", "**Jun**ior Analyst" were skipped as dates | `c54e744` |
-| B2 | Only Indian locations recognised: jobs in London or Toronto shifted the whole job list | `c54e744` |
-| B3 | Popup taller than Chrome's 600px limit | `6321e56` |
-| B4 | Deep Mode's second button hidden below the fold | `0d31f92` |
-| B5 | "● Active" shown for keys the server rejects | `a3dce6e` |
-| B6 | Closing the popup lost the run, the message and the used quota | `0d31f92` |
-| B7 | Edits and "Regenerate" never reached Recent; Deep Mode contacts could overwrite each other | `eac5e6e` |
-| B8 | Server error pages shown as raw JSON parse errors | `35b8e1b` |
-| B9 | No time limit on server calls | `35b8e1b` |
-| B10 | Unused `tabs` permission (install warning) | `2356afc` |
-| B11 | Dead code in the background | `2356afc` |
-| B12 | On the 2026 page: name read from the tab title with the notification count (like "(6) Jane Doe"); no headline or location (there is no `<h1>` any more) | `d362953` |
-| B13 | On the 2026 page: Experience, Education and Skills never load, because v3 scrolls the window and the page now scrolls an inner box | `d362953` |
-| B14 | On the 2026 page: About skipped, junk "skills", the person's own headline read as a "post" | `d362953` |
+| B1 | Job titles like "**Mar**keting Manager", "**Jun**ior Analyst" were skipped as dates | `013747b` |
+| B2 | Only Indian locations recognised: jobs in London or Toronto shifted the whole job list | `013747b` |
+| B3 | Popup taller than Chrome's 600px limit | `218c84a` |
+| B4 | Deep Mode's second button hidden below the fold | `1eb6f09` |
+| B5 | "● Active" shown for keys the server rejects | `26926b2` |
+| B6 | Closing the popup lost the run, the message and the used quota | `1eb6f09` |
+| B7 | Edits and "Regenerate" never reached Recent; Deep Mode contacts could overwrite each other | `86eb472` |
+| B8 | Server error pages shown as raw JSON parse errors | `9351f2c` |
+| B9 | No time limit on server calls | `9351f2c` |
+| B10 | Unused `tabs` permission (install warning) | `16bb7a9` |
+| B11 | Dead code in the background | `16bb7a9` |
+| B12 | On the 2026 page: name read from the tab title with the notification count (like "(6) Jane Doe"); no headline or location (there is no `<h1>` any more) | `67da416` |
+| B13 | On the 2026 page: Experience, Education and Skills never load, because v3 scrolls the window and the page now scrolls an inner box | `67da416` |
+| B14 | On the 2026 page: About skipped, junk "skills", the person's own headline read as a "post" | `67da416` |
 
 Two more bugs were found in v4's own new code by its tests (a lock race in the job runner, and a migration write-back race), and fixed before shipping. Details are in the commit messages.
 

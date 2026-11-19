@@ -1,6 +1,6 @@
 # Scraper benchmark
 
-The original v3.0.2 scraper (commit `f8f21ec`, run unchanged) against scraper v2, in real Chromium,
+The original v3.0.2 scraper (commit `e4af38f`, run unchanged) against scraper v2, in real Chromium,
 on 8 made-up profiles built with the structure of LinkedIn's 2026 profile page
 (see `test/fixtures/`). Run it yourself: `npm run bench`.
 
