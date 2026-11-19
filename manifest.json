@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Outreach AI",
-  "version": "3.0.2",
-  "description": "AI-powered LinkedIn outreach message generator. Requires a license key.",
+  "version": "3.1.0",
+  "description": "LinkedIn outreach message generator. No license key required.",
   "permissions": [
     "activeTab",
     "storage",
@@ -11,7 +11,7 @@
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
-    "https://linkedin-extention-production.up.railway.app/*"
+    "https://api.anthropic.com/*"
   ],
   "background": {
     "service_worker": "background.js"

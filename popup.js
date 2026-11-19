@@ -24,17 +24,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ─── License key status in header ────────────────────────────────────────────
 async function checkLicenseStatus() {
   const s   = await loadStoredSettings();
-  const key = (s.licenseKey || '').trim();
+  const key = (s.userApiKey || '').trim();
   const el  = document.getElementById('key-status');
-
-  if (!key) {
-    el.textContent = 'No Key';
-    el.className   = 'key-status inactive';
-    document.getElementById('no-key-warning').classList.remove('hidden');
-    return;
-  }
-
-  el.textContent = '● Active';
+  el.textContent = key ? '● AI Mode' : '● Free Mode';
   el.className   = 'key-status active';
   document.getElementById('no-key-warning').classList.add('hidden');
 }
@@ -98,7 +90,7 @@ function wireCurrentEvents() {
 function wireSettingsEvents() {
   document.getElementById('save-settings-btn').addEventListener('click', handleSaveSettings);
   document.getElementById('validate-btn').addEventListener('click', handleValidateKey);
-  document.getElementById('license-key').addEventListener('keydown', e => {
+  document.getElementById('api-key').addEventListener('keydown', e => {
     if (e.key === 'Enter') handleValidateKey();
   });
 
@@ -130,12 +122,6 @@ function wireRecentEvents() {
 async function handleScrapeAndGenerate() {
   if (isGenerating) return;
 
-  const s = await loadStoredSettings();
-  if (!s.licenseKey) {
-    showCurrentStatus('No license key. Add it in Settings.', 'error');
-    switchTab('settings');
-    return;
-  }
 
   isGenerating = true;
   hideMessage();
@@ -200,12 +186,6 @@ async function handleRegenerate() {
 async function handleEnrich() {
   if (isEnriching) return;
 
-  const s = await loadStoredSettings();
-  if (!s.licenseKey) {
-    showCurrentStatus('No license key. Add it in Settings.', 'error');
-    switchTab('settings');
-    return;
-  }
 
   deepProfileJSON = null;
   deepEnrichmentJSON = null;
@@ -234,7 +214,7 @@ async function handleEnrich() {
   renderProfileCard(rawProfileData);
   setLayerStatus(1, 'running', 'Parsing…');
   setButtonLoading('enrich-btn', 'enrich-label', 'enrich-spinner', true, 'Running AI layers…');
-  showCurrentStatus('Enriching — this takes ~20 seconds…');
+  showCurrentStatus('Enriching…');
 
   chrome.runtime.sendMessage({ type: 'RUN_ENRICH', payload: { rawProfileData } }, (response) => {
     isEnriching = false;
@@ -270,9 +250,9 @@ async function handleDeepGenerate() {
   if (isGenerating || !deepProfileJSON || !deepEnrichmentJSON) return;
 
   isGenerating = true;
-  setButtonLoading('deep-generate-btn', 'deep-gen-label', 'deep-gen-spinner', true, 'Claude is writing…');
+  setButtonLoading('deep-generate-btn', 'deep-gen-label', 'deep-gen-spinner', true, 'Writing message…');
   setLayerStatus(3, 'running', 'Writing…');
-  showCurrentStatus('Layer 3: Claude writing message…');
+  showCurrentStatus('Layer 3: writing message…');
   hideMessage();
 
   const messageType = document.getElementById('message-type').value;
@@ -282,7 +262,7 @@ async function handleDeepGenerate() {
     { type: 'RUN_GENERATE', payload: { profileJSON: deepProfileJSON, enrichmentJSON: deepEnrichmentJSON, messageType, tone } },
     async (response) => {
       isGenerating = false;
-      setButtonLoading('deep-generate-btn', 'deep-gen-label', 'deep-gen-spinner', false, 'Generate Message (L3 — Claude)');
+      setButtonLoading('deep-generate-btn', 'deep-gen-label', 'deep-gen-spinner', false, 'Generate Message (L3)');
 
       if (chrome.runtime.lastError || !response) {
         setLayerStatus(3, 'error', 'Error');
@@ -316,7 +296,7 @@ async function handleDeepGenerate() {
 // ─── Settings ─────────────────────────────────────────────────────────────────
 async function loadSettings() {
   const s = await loadStoredSettings();
-  if (s.licenseKey) document.getElementById('license-key').value = s.licenseKey;
+  if (s.userApiKey) document.getElementById('api-key').value = s.userApiKey;
   if (s.userName)   document.getElementById('user-name').value   = s.userName;
   if (s.userBio)    document.getElementById('user-bio').value    = s.userBio;
   if (s.resumeFileName) {
@@ -330,11 +310,11 @@ async function loadSettings() {
 }
 
 async function handleSaveSettings() {
-  const licenseKey = document.getElementById('license-key').value.trim().toUpperCase();
+  const userApiKey = document.getElementById('api-key').value.trim();
   const userName   = document.getElementById('user-name').value.trim();
   const userBio    = document.getElementById('user-bio').value.trim();
 
-  const savePayload = { licenseKey, userName, userBio };
+  const savePayload = { userApiKey, userName, userBio };
   if (pendingResume) {
     savePayload.resumeBase64   = pendingResume.base64;
     savePayload.resumeFileName = pendingResume.fileName;
@@ -349,32 +329,31 @@ async function handleSaveSettings() {
 }
 
 async function handleValidateKey() {
-  const key = document.getElementById('license-key').value.trim().toUpperCase();
-  if (!key) return;
+  const apiKey = document.getElementById('api-key').value.trim();
+  if (!apiKey) return;
 
   const btn = document.getElementById('validate-btn');
   btn.textContent = '…';
   btn.disabled = true;
 
   const result = await new Promise(resolve => {
-    chrome.runtime.sendMessage({ type: 'VALIDATE_KEY', payload: { key } }, resolve);
+    chrome.runtime.sendMessage({ type: 'TEST_API_KEY', payload: { apiKey } }, resolve);
   });
 
-  btn.textContent = 'Verify';
+  btn.textContent = 'Test';
   btn.disabled = false;
 
   const el = document.getElementById('key-validation-status');
   el.classList.remove('hidden');
 
   if (result && result.valid) {
-    el.textContent = `✓ Valid key — ${result.remaining} messages remaining today`;
+    el.textContent = '✓ Key works — AI Mode on';
     el.className   = 'key-validation-status valid';
-    // Auto-save the key
     const s = await loadStoredSettings();
-    await new Promise(resolve => chrome.storage.local.set({ ...s, licenseKey: key }, resolve));
+    await new Promise(resolve => chrome.storage.local.set({ ...s, userApiKey: apiKey }, resolve));
     await checkLicenseStatus();
   } else {
-    el.textContent = `✗ ${result?.reason || 'Invalid key'}`;
+    el.textContent = `✗ ${result?.reason || 'Key did not work'}`;
     el.className   = 'key-validation-status invalid';
   }
 }
@@ -579,7 +558,7 @@ function processResumeFile(file) {
 
 function loadStoredSettings() {
   return new Promise(resolve => {
-    chrome.storage.local.get(['licenseKey','userName','userBio','resumeBase64','resumeFileName'], resolve);
+    chrome.storage.local.get(['userApiKey','userName','userBio','resumeBase64','resumeFileName'], resolve);
   });
 }
 
