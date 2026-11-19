@@ -262,11 +262,15 @@ if (!globalThis.__arkInpage) {
     // First choice: select what is in the box and let the browser itself type
     // the new text. LinkedIn then gets the browser's own input events, and
     // Ctrl+Z still works.
+    // (Checked on live LinkedIn, Nov 2026: its message editor takes both ways
+    // and turns Send on. Always use the box's own document: the Messaging
+    // page keeps its editor in an embedded frame.)
     function setText(field, text) {
+      const doc = field.ownerDocument;
       field.focus();
       selectAll(field);
-      const typed = typeof document.execCommand === 'function'
-        && document.execCommand(text ? 'insertText' : 'delete', false, text);
+      const typed = typeof doc.execCommand === 'function'
+        && doc.execCommand(text ? 'insertText' : 'delete', false, text);
       if (typed && squash(currentText(field)) === squash(text)) return;
 
       // Fallback (e.g. the browser cut the text at the box's maxlength):
@@ -279,9 +283,9 @@ if (!globalThis.__arkInpage) {
         return;
       }
       field.replaceChildren(...String(text).split('\n').map(line => {
-        const p = document.createElement('p');
+        const p = doc.createElement('p');
         if (line) p.textContent = line;
-        else p.append(document.createElement('br'));
+        else p.append(doc.createElement('br'));
         return p;
       }));
       field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
@@ -292,9 +296,10 @@ if (!globalThis.__arkInpage) {
         field.select();
         return;
       }
+      const doc = field.ownerDocument;
       const root = field.getRootNode();
-      const selection = (root.getSelection && root.getSelection()) || document.getSelection();
-      const range = document.createRange();
+      const selection = (root.getSelection && root.getSelection()) || doc.getSelection();
+      const range = doc.createRange();
       range.selectNodeContents(field);
       selection.removeAllRanges();
       selection.addRange(range);
