@@ -26,10 +26,15 @@
 //     box has text.
 //   - Every Connect button is labelled "Invite <Name> to connect", also the
 //     ones for other people in the "People you may know" list.
-// Not seen live yet: the 2026 "Add a note" box itself. It is found as a
-// dialog that talks about a note or invitation and has a <textarea>. Its
-// limit comes from the textarea's maxlength, or a "0/200" counter, or (if
-// neither is there) your LinkedIn plan in Settings.
+//   - Connect (sometimes inside "More") opens a <dialog> "Add a note to
+//     your invitation?" with "Add a note" and "Send without a note". On a
+//     free plan with no custom notes left this month, "Add a note" opens a
+//     Premium offer instead, with no text box: no bar appears, as it should.
+// Not seen live yet: the 2026 note box itself (the account used had no
+// free notes left). It is found as a dialog that talks about a note or
+// invitation and has a <textarea>. Its limit comes from the textarea's
+// maxlength, or a "0/200" counter, or (if neither is there) your LinkedIn
+// plan in Settings.
 
 if (!globalThis.__arkInpage) {
   globalThis.__arkInpage = true;

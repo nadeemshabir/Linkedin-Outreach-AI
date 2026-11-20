@@ -61,6 +61,20 @@ describe('scraper v2: details', () => {
     expect(byName['Liam Byrne'].relationship).toBe('none');
   });
 
+  it('a hidden "· 1st" line does not make a stranger a connection (seen live, Nov 2026)', () => {
+    const win = new Window({ url: 'https://www.linkedin.com/in/jane-doe-test/' });
+    win.document.write(`<html><head><title>Jane Doe | LinkedIn</title></head><body><main><section>
+      <h2>Jane Doe</h2>
+      <div style="display:none"><p>· 1st</p></div>
+      <div><p>· 2nd</p></div>
+      <p>Founder at Example Co</p>
+      <div><p>Pune, India</p><p>·</p><p><a href="/in/jane-doe-test/overlay/contact-info/">Contact info</a></p></div>
+    </section></main></body></html>`);
+    expect(LinkedInScraper.readTopCard(win.document)).toMatchObject({
+      name: 'Jane Doe', degree: '2nd', relationship: 'none', headline: 'Founder at Example Co',
+    });
+  });
+
   it('on your own profile: pronouns are not the headline, and there is no degree', () => {
     expect(byName['Rahul Sharma']).toMatchObject({ headline: 'Data Analyst | MSc Data Analytics, UCD', degree: null });
   });

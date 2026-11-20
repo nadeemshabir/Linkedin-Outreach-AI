@@ -92,8 +92,13 @@ globalThis.LinkedInScraper = globalThis.LinkedInScraper || (() => {
     if (!nameH2) return { name, headline: null, location: null, degree: null, relationship: null };
 
     const card = nameH2.closest('section') || nameH2.parentElement;
-    const after = [...card.querySelectorAll('p')]
-      .filter(p => p.children.length === 0 && (nameH2.compareDocumentPosition(p) & 4)) // 4 = after
+    const lines = [...card.querySelectorAll('p')]
+      .filter(p => p.children.length === 0 && (nameH2.compareDocumentPosition(p) & 4)); // 4 = after
+    // Only the lines you can see. The live page (Nov 2026) also has a hidden
+    // "· 1st" line before the real "· 2nd", which made a stranger look like a
+    // connection. If nothing is shown (a page with no layout), use them all.
+    const shown = lines.filter(p => typeof p.checkVisibility !== 'function' || p.checkVisibility());
+    const after = (shown.length ? shown : lines)
       .map(p => clean(p.textContent))
       .filter(Boolean);
 
