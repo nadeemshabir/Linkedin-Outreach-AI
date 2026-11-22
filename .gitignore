@@ -1,0 +1,12 @@
+node_modules/
+test-results/
+playwright-report/
+coverage/
+dist/
+*.log
+.DS_Store
+
+# Local-only files
+PLAN.md
+DEMO-SCRIPT.md
+.claude/

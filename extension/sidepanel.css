@@ -1,4 +1,4 @@
-/* popup.css — LinkedIn Outreach Generator */
+/* sidepanel.css — LinkedIn Outreach AI (side panel, or popup as a fallback) */
 
 /* ── Reset & base ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -33,12 +33,20 @@ body {
   font-size: 13px;
   background: var(--bg);
   color: var(--text);
-  width: 400px;
-  min-height: 480px;
-  max-height: 620px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* Side panel: fill the panel, whatever width the user drags it to. */
+html.is-panel, html.is-panel body { height: 100%; }
+html.is-panel body { width: 100%; min-width: 300px; }
+
+/* Popup fallback (browsers without the Side Panel API): fixed size. */
+html.is-popup body {
+  width: 400px;
+  min-height: 480px;
+  max-height: 600px; /* Chrome's hard limit for popups */
 }
 
 /* ── App shell ─────────────────────────────────────────────────────────────── */
@@ -218,6 +226,103 @@ body {
   color: var(--accent);
   font-weight: 600;
 }
+
+.mode-hint {
+  font-size: 11px;
+  color: var(--text-2);
+  margin: -4px 0 10px;
+}
+
+#generate-btn { margin-bottom: 10px; }
+
+.channel-group { margin-bottom: 10px; }
+.channel-group .mode-toggle { margin-bottom: 6px; }
+.channel-group .mode-hint { margin: 0; }
+
+/* Length meter: "183 / 200" turns amber near the limit and red over it. */
+.char-count.near { color: var(--warning); font-weight: 600; }
+.char-count.over { color: var(--error);   font-weight: 600; }
+
+.fit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  color: var(--error);
+  background: var(--error-bg);
+  border-top: 1px solid var(--border);
+}
+.fit-row.ok { color: var(--text-2); background: var(--surface-2); }
+
+/* ── Common ground chips ───────────────────────────────────────────────────── */
+.common-ground { margin: -2px 0 10px; }
+.cg-label { font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 5px; }
+.cg-hint  { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.cg-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cg-chip {
+  font-size: 11.5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.cg-chip[aria-pressed="true"] { border-color: var(--success); background: var(--success-bg); color: var(--success); font-weight: 600; }
+.cg-chip[aria-pressed="true"]::before { content: '✓ '; }
+.cg-none, .cg-tip { font-size: 11px; color: var(--text-2); }
+.cg-tip { margin: -2px 0 10px; }
+
+.goal-group { margin-bottom: 10px; }
+.optional { font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+/* ── Message check ─────────────────────────────────────────────────────────── */
+.strength { padding: 8px 12px 9px; border-top: 1px solid var(--border); }
+.strength-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; font-weight: 600; color: var(--text-2);
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;
+}
+.strength-score { text-transform: none; letter-spacing: 0; padding: 1px 8px; border-radius: 999px; }
+.strength-score.strong { background: var(--success-bg); color: var(--success); }
+.strength-score.good   { background: var(--warning-bg); color: var(--warning); }
+.strength-score.weak   { background: var(--error-bg);   color: var(--error); }
+.strength-list { list-style: none; font-size: 11.5px; line-height: 1.5; }
+.strength-list li { padding: 1px 0 1px 18px; position: relative; }
+.strength-list li::before { position: absolute; left: 0; font-weight: 700; }
+.strength-list li.ok::before   { content: '✓'; color: var(--success); }
+.strength-list li.fail::before { content: '✗'; color: var(--error); }
+.strength-list li.warn::before { content: '!'; color: var(--warning); left: 3px; }
+.strength-list .tip { display: block; color: var(--text-2); font-size: 11px; }
+
+/* ── Your profile (Settings) ───────────────────────────────────────────────── */
+.me-box {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 8px 10px;
+}
+.me-status  { font-size: 11.5px; color: var(--text-2); line-height: 1.45; }
+.me-status strong { color: var(--text); }
+.me-actions { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+
+.close-hint {
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+  margin: -2px 0 10px;
+}
+
+.how-it-works {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.how-it-works summary { cursor: pointer; }
+.how-it-works p { margin-top: 6px; }
 
 /* ── Pipeline panel ────────────────────────────────────────────────────────── */
 .pipeline-panel {
@@ -610,6 +715,86 @@ body {
   justify-content: space-between;
 }
 
+/* ── Tracker ───────────────────────────────────────────────────────────────── */
+.tab-count {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.tracker-stats {
+  font-size: 11.5px;
+  color: var(--text-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.tracker-stats strong { color: var(--text); }
+
+.section-label {
+  font-size: 11px; font-weight: 600; color: var(--text-2);
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px;
+}
+.tracker-due { margin-bottom: 12px; }
+.tracker-due .contact-card { border-color: var(--accent); background: var(--accent-light); }
+
+.tracker-filters { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.filter-btn {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer;
+}
+.filter-btn.active { border-color: var(--accent); background: var(--accent-light); color: var(--accent); font-weight: 600; }
+
+.status-select {
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.contact-next {
+  font-size: 11.5px;
+  color: var(--accent);
+  margin: -2px 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.contact-buttons { display: flex; align-items: center; gap: 10px; }
+
+/* "You already wrote to this person" on the Current tab */
+.tracked {
+  background: var(--accent-light);
+  border: 1px solid #C3D4FD;
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin: -2px 0 10px;
+  font-size: 11.5px;
+}
+.tracked-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tracked-next { margin-top: 4px; color: var(--accent); font-weight: 600; }
+
+.sent-prompt {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  color: var(--success);
+  background: var(--success-bg);
+  border-top: 1px solid var(--border);
+}
+
 /* ── Empty state ───────────────────────────────────────────────────────────── */
 .empty-state {
   display: flex;
@@ -637,6 +822,7 @@ body {
 }
 
 .license-key-label {
+  display: block;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
@@ -644,6 +830,9 @@ body {
   color: var(--accent);
   margin-bottom: 4px;
 }
+
+/* The AI provider list, above the key box */
+.provider-select { margin-bottom: 12px; }
 
 .license-key-desc {
   font-size: 12px;
@@ -666,8 +855,7 @@ body {
   letter-spacing: .05em;
   color: var(--text);
   background: var(--surface);
-  text-transform: uppercase;
-  outline: none;
+  outline: none; /* no capitals: Anthropic keys are lower-case and case-sensitive */
 }
 
 .license-key-input:focus { border-color: var(--accent); }
@@ -685,6 +873,28 @@ body {
 }
 
 .validate-btn:hover { background: #1648c0; }
+
+/* Show / Hide: the key is hidden like a password until you ask to see it */
+.show-key-btn {
+  padding: 9px 10px;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.show-key-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.key-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
 
 .key-validation-status {
   margin-top: 8px;
@@ -705,8 +915,13 @@ body {
   margin-left: auto;
 }
 
-.key-status.active   { background: var(--success-bg); color: var(--success); }
-.key-status.inactive { background: var(--error-bg);   color: var(--error); }
+/* "Use my resume in AI Mode" */
+.check-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--text-2); line-height: 1.45; cursor: pointer; }
+.check-row input { margin-top: 2px; flex: none; }
+
+.key-status.active     { background: var(--success-bg); color: var(--success); }  /* AI Mode */
+.key-status.free       { background: var(--bg);         color: var(--text-2); }   /* Free Mode */
+.key-status.inactive   { background: var(--error-bg);   color: var(--error); }    /* key not working */
 
 /* Settings note */
 .settings-note {
@@ -715,6 +930,14 @@ body {
   text-align: center;
   margin-top: 8px;
   line-height: 1.5;
+}
+
+.settings-note-intro { margin: 0; }
+
+.settings-note-list {
+  text-align: left;
+  margin: 4px 0 0;
+  padding-left: 18px;
 }
 
 /* Alert warning variant */

@@ -1,29 +1,37 @@
 {
   "manifest_version": 3,
   "name": "LinkedIn Outreach AI",
-  "version": "3.1.0",
-  "description": "LinkedIn outreach message generator. No license key required.",
+  "version": "4.0.0",
+  "description": "Writes LinkedIn notes and messages. Free Mode works on your device; AI Mode uses your own Anthropic, Gemini or OpenAI key.",
+  "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
     "storage",
-    "tabs",
-    "scripting"
+    "scripting",
+    "sidePanel",
+    "alarms"
   ],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://api.anthropic.com/*"
   ],
+  "optional_host_permissions": [
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.openai.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup.html",
     "default_title": "LinkedIn Outreach AI"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "content_scripts": [
     {
       "matches": ["https://www.linkedin.com/*"],
-      "js": ["content_script.js"],
+      "js": ["scraper.js", "content_script.js", "utils/writer.js", "inpage.js"],
       "run_at": "document_idle"
     }
   ],

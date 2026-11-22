@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkedIn Outreach AI</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <div class="app">
+
+    <header class="app-header">
+      <div class="header-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M20 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6C22 4.9 21.1 4 20 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M2 8H22" stroke="currentColor" stroke-width="2"/>
+          <path d="M6 14H10M14 14H18M6 17H8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h1 class="app-title">Outreach AI</h1>
+      <div class="key-status" id="key-status" role="status"></div>
+    </header>
+
+    <nav class="tab-nav" role="tablist" aria-label="Sections">
+      <button class="tab-btn active" data-tab="current"  id="tabbtn-current"  role="tab" aria-selected="true"  aria-controls="tab-current">CURRENT</button>
+      <button class="tab-btn"        data-tab="recent"   id="tabbtn-recent"   role="tab" aria-selected="false" aria-controls="tab-recent">TRACKER<span class="tab-count hidden" id="due-count"></span></button>
+      <button class="tab-btn"        data-tab="settings" id="tabbtn-settings" role="tab" aria-selected="false" aria-controls="tab-settings">SETTINGS</button>
+    </nav>
+
+    <!-- ── CURRENT tab ── -->
+    <section class="tab-content active" id="tab-current" role="tabpanel" aria-labelledby="tabbtn-current">
+
+      <div class="alert alert-info hidden" id="page-warning">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        Open a LinkedIn profile to write a message. This panel follows you as you browse.
+      </div>
+
+      <div class="alert alert-warning hidden" id="no-key-warning" role="status">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M12 8v4M12 16h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span id="key-warning-text">Your Anthropic API key was not accepted. Check it in Settings, or remove it to use Free Mode.</span>
+      </div>
+
+      <div class="profile-card hidden" id="profile-section">
+        <div class="profile-avatar" id="profile-avatar" aria-hidden="true">?</div>
+        <div class="profile-details">
+          <div class="profile-name" id="profile-name"></div>
+          <div class="profile-headline" id="profile-headline"></div>
+          <div class="profile-company" id="profile-company"></div>
+        </div>
+      </div>
+
+      <!-- Shown when you already wrote to this person (also a duplicate warning). -->
+      <div class="tracked hidden" id="tracked-banner">
+        <div class="tracked-row">
+          <span id="tracked-text"></span>
+          <select id="tracked-status" class="status-select" aria-label="Status"></select>
+        </div>
+        <div class="tracked-next hidden" id="tracked-next"></div>
+      </div>
+
+      <div class="common-ground hidden" id="common-ground">
+        <div class="cg-label">In common <span class="cg-hint">· tap to use or skip</span></div>
+        <div class="cg-chips" id="cg-chips"></div>
+        <p class="cg-none hidden" id="cg-none">No shared school, company or city found.</p>
+      </div>
+      <p class="cg-tip hidden" id="cg-tip">Tip: add your own LinkedIn profile in Settings, and the extension will find what you have in common.</p>
+
+      <div class="field-group full channel-group">
+        <span class="field-label" id="channel-label">Send as</span>
+        <div class="mode-toggle" role="radiogroup" aria-labelledby="channel-label">
+          <button class="mode-btn active" id="channel-note" data-channel="note" role="radio" aria-checked="true">Connection note</button>
+          <button class="mode-btn" id="channel-message" data-channel="message" role="radio" aria-checked="false">Message</button>
+        </div>
+        <p class="mode-hint" id="channel-hint"></p>
+      </div>
+
+      <div class="controls-row">
+        <div class="field-group">
+          <label class="field-label" for="message-type">Message Type</label>
+          <div class="select-wrapper">
+            <select id="message-type" class="field-select">
+              <option value="Networking">Networking</option>
+              <option value="Job">Job Opportunity</option>
+              <option value="Referral">Referral Request</option>
+              <option value="Collaboration">Collaboration</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label" for="tone">Tone</label>
+          <div class="select-wrapper">
+            <select id="tone" class="field-select">
+              <option value="Formal">Formal</option>
+              <option value="Neutral" selected>Neutral</option>
+              <option value="Casual">Casual</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="field-group full goal-group">
+        <label class="field-label" for="goal">Goal <span class="optional">(optional)</span></label>
+        <input id="goal" type="text" class="field-input" maxlength="200" autocomplete="off"
+          placeholder="e.g. Referral for the Data Analyst role at Spotify" />
+      </div>
+
+      <div class="mode-toggle" role="radiogroup" aria-label="Quick or Deep">
+        <button class="mode-btn active" id="mode-simple" role="radio" aria-checked="true">⚡ Quick</button>
+        <button class="mode-btn" id="mode-deep" role="radio" aria-checked="false">🔍 Deep</button>
+      </div>
+      <p class="mode-hint" id="mode-hint">Writes straight away.</p>
+
+      <button id="generate-btn" class="btn btn-primary btn-full">
+        <span id="generate-label">Generate message</span>
+        <span id="generate-spinner" class="spinner hidden"></span>
+      </button>
+
+      <!-- Progress, in plain words. Shown while a message is being made, and after. -->
+      <div class="pipeline-panel hidden" id="steps" aria-label="Progress">
+        <div class="layer-row" id="step-reading">
+          <div class="layer-badge l1">1</div>
+          <div class="layer-info">
+            <div class="layer-title">Read the profile</div>
+            <div class="layer-desc">From the LinkedIn page you are on</div>
+          </div>
+          <div class="layer-status-wrap"><div class="status-dot"></div><span class="layer-status-text"></span></div>
+        </div>
+        <div class="layer-row" id="step-enriching">
+          <div class="layer-badge l2">2</div>
+          <div class="layer-info">
+            <div class="layer-title">Find talking points</div>
+            <div class="layer-desc">From their profile: posts, role, school</div>
+          </div>
+          <div class="layer-status-wrap"><div class="status-dot"></div><span class="layer-status-text"></span></div>
+        </div>
+        <div class="layer-row" id="step-writing">
+          <div class="layer-badge l3">3</div>
+          <div class="layer-info">
+            <div class="layer-title">Write the message</div>
+            <div class="layer-desc">Free Mode: from a template. AI Mode: by <span class="ai-writer">Claude</span>, with your key.</div>
+          </div>
+          <div class="layer-status-wrap"><div class="status-dot"></div><span class="layer-status-text"></span></div>
+        </div>
+      </div>
+      <p class="close-hint hidden" id="close-hint">You can close this. Your message will be waiting here.</p>
+
+      <div class="status-bar hidden" id="status-message" role="status" aria-live="polite"></div>
+
+      <div class="message-area hidden" id="message-section">
+        <div class="message-area-header">
+          <label class="message-area-label" for="generated-message">Generated Message</label>
+          <span class="char-count" id="char-count" aria-live="polite">0 chars</span>
+        </div>
+        <textarea id="generated-message" class="message-textarea" rows="8" spellcheck="true"></textarea>
+        <div class="fit-row hidden" id="fit-row">
+          <span id="fit-text"></span>
+          <button class="btn-link" id="fit-btn"></button>
+          <button class="btn-link hidden" id="undo-fit-btn">Undo</button>
+        </div>
+        <div class="sent-prompt hidden" id="sent-prompt">
+          <span>Copied. Once you send it on LinkedIn:</span>
+          <button class="btn btn-sm btn-primary" id="mark-sent-btn">Mark as sent</button>
+        </div>
+        <div class="strength" id="strength">
+          <div class="strength-head">
+            <span>Message check</span>
+            <span class="strength-score" id="strength-score"></span>
+          </div>
+          <ul class="strength-list" id="strength-list" aria-live="polite"></ul>
+        </div>
+        <div class="action-row">
+          <button id="regenerate-btn" class="btn btn-secondary" title="Rewrite the message. Reuses what was already found, so it is quick.">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 0 1 3.51 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            New version
+          </button>
+          <button id="copy-btn" class="btn btn-primary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2"/></svg>
+            Copy
+          </button>
+        </div>
+      </div>
+
+      <div class="hooks-panel hidden" id="hooks-panel">
+        <div class="hooks-label">⚡ Talking points found</div>
+        <div id="hooks-list"></div>
+      </div>
+
+      <details class="how-it-works">
+        <summary>How are messages written?</summary>
+        <p>With no key, Free Mode writes the message from a template, on this device, for free. With your own API key from <span class="ai-company">Anthropic</span> (Settings), AI Mode lets <span class="ai-writer">Claude</span> write it. Quick writes straight away; Deep first shows the talking points it found on the profile.</p>
+      </details>
+
+    </section>
+
+    <!-- ── TRACKER tab (was: Recent) ── -->
+    <section class="tab-content" id="tab-recent" role="tabpanel" aria-labelledby="tabbtn-recent">
+      <div class="tracker-stats hidden" id="tracker-stats"></div>
+
+      <div class="tracker-due hidden" id="tracker-due">
+        <div class="section-label">Due now</div>
+        <div id="due-list"></div>
+      </div>
+
+      <div class="tracker-filters hidden" id="tracker-filters" role="radiogroup" aria-label="Show">
+        <button class="filter-btn active" data-filter="all"       role="radio" aria-checked="true">All</button>
+        <button class="filter-btn"        data-filter="drafted"   role="radio" aria-checked="false">Drafted</button>
+        <button class="filter-btn"        data-filter="sent"      role="radio" aria-checked="false">Sent</button>
+        <button class="filter-btn"        data-filter="connected" role="radio" aria-checked="false">Connected</button>
+        <button class="filter-btn"        data-filter="replied"   role="radio" aria-checked="false">Replied</button>
+      </div>
+
+      <div id="recent-list"></div>
+      <div class="empty-state" id="no-recent">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" stroke-width="1.5"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <p>No one tracked yet.</p>
+        <p class="empty-hint">Generate a message on a LinkedIn profile, and the person shows up here with what to do next.</p>
+      </div>
+
+      <div class="recent-header hidden" id="recent-actions">
+        <button class="btn-link" id="export-csv-btn">Export CSV</button>
+        <button class="btn-ghost" id="clear-recent-btn">Clear all</button>
+      </div>
+    </section>
+
+    <!-- ── SETTINGS tab ── -->
+    <section class="tab-content" id="tab-settings" role="tabpanel" aria-labelledby="tabbtn-settings">
+      <div class="settings-form">
+
+        <!-- Optional: AI Mode, with your own key from the AI company you pick -->
+        <div class="license-key-section">
+          <div class="license-key-desc">Leave the key empty for Free Mode: messages are written from a template on this device, for free. Or pick an AI company and add your own API key from it, to let its AI write them (AI Mode). It charges your account, well under a cent per message.</div>
+          <label class="license-key-label" for="ai-provider">AI provider</label>
+          <div class="select-wrapper provider-select">
+            <!-- Filled from utils/providers.js. Applies at once; each company keeps its own key. -->
+            <select id="ai-provider" class="field-select"></select>
+          </div>
+          <label class="license-key-label" for="api-key" id="api-key-label">Anthropic API key (optional)</label>
+          <div class="license-key-input-wrap">
+            <input id="api-key" type="password" class="license-key-input"
+              placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+            <button class="show-key-btn" id="show-key-btn" type="button" aria-pressed="false" aria-label="Show the key">Show</button>
+            <button class="validate-btn" id="validate-btn">Test</button>
+          </div>
+          <div class="key-hint" id="key-hint">Get a key at console.anthropic.com. It is kept only on this device, hidden like a password, and sent only to Anthropic.</div>
+          <div class="key-validation-status hidden" id="key-validation-status" role="status"></div>
+        </div>
+
+        <div class="field-group full">
+          <label class="field-label" for="linkedin-plan">Your LinkedIn plan</label>
+          <div class="select-wrapper">
+            <select id="linkedin-plan" class="field-select">
+              <option value="free">Free (notes up to 200 characters, a few per month)</option>
+              <option value="premium">Premium (notes up to 300 characters)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-group full">
+          <span class="field-label">Your LinkedIn profile</span>
+          <div class="me-box">
+            <div class="me-status" id="me-status">Not added yet. Open your own LinkedIn profile, then click the button. It lets the extension find what you have in common with people.</div>
+            <div class="me-actions">
+              <button class="btn btn-sm btn-secondary" id="import-me-btn">Use the profile I'm on</button>
+              <button class="btn-link hidden" id="remove-me-btn">Remove</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="field-group full">
+          <label class="field-label" for="user-name">Your Name</label>
+          <input id="user-name" type="text" class="field-input" placeholder="Jane Smith" autocomplete="off" />
+        </div>
+
+        <div class="field-group full">
+          <label class="field-label" for="user-bio">Your Bio</label>
+          <textarea id="user-bio" class="field-textarea" rows="3"
+            placeholder="Brief professional summary — used to personalize messages."></textarea>
+        </div>
+
+        <div class="field-group full">
+          <label class="field-label" for="resume-upload">Your Resume (PDF, optional)</label>
+          <div class="file-upload-area" id="file-upload-area">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M14 2v6h6M12 18v-6M9 15l3-3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span id="file-label">Click to upload or drag PDF here</span>
+            <input id="resume-upload" type="file" accept=".pdf" class="file-input" />
+          </div>
+          <div class="resume-status hidden" id="resume-status" role="status"></div>
+          <label class="check-row" for="resume-for-ai">
+            <input id="resume-for-ai" type="checkbox" />
+            <span>Use my resume in AI Mode. It is sent to <span class="ai-company">Anthropic</span> with each message, so <span class="ai-writer">Claude</span> can say what you can offer.</span>
+          </label>
+          <button class="btn-link hidden" id="remove-resume-btn" type="button">Remove resume</button>
+        </div>
+
+        <button id="save-settings-btn" class="btn btn-primary btn-full">Save Settings</button>
+        <div class="status-bar hidden" id="settings-status" role="status"></div>
+
+        <div class="settings-note">
+          <p class="settings-note-intro">Everything is saved only on this device. In Free Mode, nothing leaves it. In AI Mode, these go to <span class="ai-company">Anthropic</span> with your key, for each message:</p>
+          <ul class="settings-note-list">
+            <li>the profile you are viewing</li>
+            <li>your name, bio and goal</li>
+            <li>what you have in common (from your own profile)</li>
+            <li>your resume, if you turned that on</li>
+          </ul>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+  <script src="utils/profile-url.js"></script>
+  <script src="utils/limits.js"></script>
+  <script src="utils/strength.js"></script>
+  <script src="utils/common-ground.js"></script>
+  <script src="utils/tracker.js"></script>
+  <script src="utils/providers.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
