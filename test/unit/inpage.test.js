@@ -361,7 +361,7 @@ describe('Write with Ark, inside LinkedIn (the page)', () => {
     const SKIPPED = "Written without your resume: Anthropic could not read the PDF (replace or remove it in the extension's Settings).";
     const SHORTER = 'Hi Aoife, would you be open to a short chat?';
     const fits    = { changed: false, fits: true, removed: 0 };
-    const page = linkedin({ reply: { ok: true, message: NOTE, limit: 200, fit: fits, resumeSkipped: true } });
+    const page = linkedin({ reply: { ok: true, message: NOTE, limit: 200, fit: fits, resumeSkipped: true, aiCompany: 'Anthropic' } });
     const bar = await openNoteViaConnect(page);
     realClick(bar.write);
     await until(() => page.note().value === NOTE);
@@ -369,7 +369,7 @@ describe('Write with Ark, inside LinkedIn (the page)', () => {
     expect(bar.info.className).toBe('info warn');
 
     // Shortened to fit: the warning, then the usual words for that.
-    page.sendMessage.mockResolvedValue({ ok: true, message: SHORTER, limit: 200, fit: { changed: true, fits: true, removed: 1 }, resumeSkipped: true });
+    page.sendMessage.mockResolvedValue({ ok: true, message: SHORTER, limit: 200, fit: { changed: true, fits: true, removed: 1 }, resumeSkipped: true, aiCompany: 'Anthropic' });
     realClick(bar.write);
     await until(() => page.note().value === SHORTER);
     expect(bar.info.textContent).toBe(`${SKIPPED} Shortened to fit 200. Read it, then press Send.`);
@@ -385,7 +385,7 @@ describe('Write with Ark, inside LinkedIn (the page)', () => {
 
     // A message box has no limit: the warning, then "Read it, then press Send."
     const message = 'Hi Seán,\n\nCould I ask you two quick questions about recruiting at Workday?';
-    const chat = linkedin({ person: SEAN, reply: { ok: true, message, limit: null, fit: null, resumeSkipped: true } });
+    const chat = linkedin({ person: SEAN, reply: { ok: true, message, limit: null, fit: null, resumeSkipped: true, aiCompany: 'Anthropic' } });
     chat.click(`button[aria-label="Message ${SEAN.name}"]`);
     const chatBar = await until(() => chat.bar());
     realClick(chatBar.write);

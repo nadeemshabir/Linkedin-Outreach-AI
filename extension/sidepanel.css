@@ -822,6 +822,7 @@ html.is-popup body {
 }
 
 .license-key-label {
+  display: block;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
@@ -829,6 +830,9 @@ html.is-popup body {
   color: var(--accent);
   margin-bottom: 4px;
 }
+
+/* The AI provider list, above the key box */
+.provider-select { margin-bottom: 12px; }
 
 .license-key-desc {
   font-size: 12px;
@@ -870,6 +874,28 @@ html.is-popup body {
 
 .validate-btn:hover { background: #1648c0; }
 
+/* Show / Hide: the key is hidden like a password until you ask to see it */
+.show-key-btn {
+  padding: 9px 10px;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.show-key-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.key-hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
 .key-validation-status {
   margin-top: 8px;
   font-size: 12px;
@@ -905,6 +931,8 @@ html.is-popup body {
   margin-top: 8px;
   line-height: 1.5;
 }
+
+.settings-note-intro { margin: 0; }
 
 .settings-note-list {
   text-align: left;

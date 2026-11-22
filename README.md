@@ -1,7 +1,7 @@
 # LinkedIn Outreach AI — v4
 
 An improved version of Ark's LinkedIn outreach extension, built on Ark's latest version, **3.1.0**.
-**Not a rewrite:** same plain JavaScript, no framework, no build step. Like 3.1.0, it needs no server and no license key: **Free Mode** writes the message from a template on your device; **AI Mode** lets Claude write it, with your own Anthropic API key.
+**Not a rewrite:** same plain JavaScript, no framework, no build step. Like 3.1.0, it needs no server and no license key: **Free Mode** writes the message from a template on your device; **AI Mode** lets an AI write it, with your own API key from the company you pick in Settings: Anthropic (Claude), Google (Gemini) or OpenAI (GPT).
 
 Commit [`e4af38f`](../../commit/e4af38f) is the original v3.0.2 exactly as received, and [`7776170`](../../commit/7776170) is Ark's 3.1.0 exactly as received. Every change after them is a tested commit. The move onto 3.1.0 is one commit, [`a9eed56`](../../commit/a9eed56), because its code and its tests only work together.
 
@@ -33,7 +33,7 @@ It greets her as "(3)" and praises her headline as a post. v4's reader gets ever
 |---|---|---|
 | **Reading the profile** | On today's LinkedIn: name with "(6)" in front, everything else empty | Every field, checked on live profiles; your scroll position is put back |
 | **Free Mode (no key)** | "Hi (3),", post quotes cut mid-word, no length limit, ignores what you have in common and your goal | The right name, always fits 200 (300 on Premium), never cuts a word, opens with what you share, turns your goal into the ask |
-| **AI Mode (your own key)** | Asks Claude for "under 600 characters" even for a 200-character note; a 400-token cap that Claude's thinking can use up; resume collected but never used | Tells Claude the real limit; no thinking for a short note; checks why Claude stopped; can use your resume (only if you turn that on); marks everything from LinkedIn as someone else's text |
+| **AI Mode (your own key)** | Asks Claude for "under 600 characters" even for a 200-character note; a 400-token cap that Claude's thinking can use up; resume collected but never used | Tells the AI the real limit; no thinking for a short note; checks why the AI stopped; can use your resume (only if you turn that on); marks everything from LinkedIn as someone else's text; pick Anthropic, Google or OpenAI, each with its own key |
 | **Writing where you type** | Copy from the popup, paste into LinkedIn | **✨ Write a note to Aoife** inside LinkedIn's own "Add a note" / message box; fitted to the box's limit; you press Send |
 | **Where it lives** | Popup that closes when you click the page | Side panel that stays open and follows you from profile to profile |
 | **Losing work** | Close the popup mid-run → result lost | The background owns each run; close and reopen, the message is there |
@@ -94,7 +94,7 @@ Read the 100% with care: the test pages copy the structure that v4's reader was 
 3. Optional: open your own LinkedIn profile, then **Settings → Use the profile I'm on** (for common ground).
 4. Open any LinkedIn profile → **Generate message**.
 5. Or write straight into LinkedIn: on a profile, click **Connect → Add a note** (or **Message**). A **✨ Write a note to …** button appears inside LinkedIn's box. Click it, read the note, then press LinkedIn's **Send** yourself.
-6. Optional, for AI Mode: **Settings → Anthropic API key** → paste your own key → **Test**. See [docs/AI-MODE.md](docs/AI-MODE.md) for what is sent and what it costs.
+6. Optional, for AI Mode: **Settings → AI provider** → pick Anthropic, Google or OpenAI → paste your own key from it → **Test**. For Google or OpenAI, Chrome first asks you to allow the extension to reach that company: choose **Allow**. See [docs/AI-MODE.md](docs/AI-MODE.md) for what is sent and what it costs.
 
 **No LinkedIn account?** Run `npm install`, then `npm run demo`. It opens the real extension in a Chromium window, on two test profiles (made-up people, LinkedIn's 2026 page structure), in Free Mode. Every other site is blocked. Open the side panel from the extension's toolbar icon (under the puzzle-piece button).
 
@@ -104,19 +104,20 @@ Read the 100% with care: the test pages copy the structure that v4's reader was 
 npm install
 npm test                        # unit tests: the real panel + background, in a fake browser
 npx playwright install chromium
-npm run test:e2e                # the real extension in Chromium, LinkedIn and Anthropic faked
+npm run test:e2e                # the real extension in Chromium, LinkedIn and the AI faked
 npm run check:permissions       # fails if the manifest would show a new install warning
 npm run bench                   # Ark's page reader against v4's, on 8 test profiles
 npm run screenshots             # screenshots into docs/screenshots/
 ```
 
-No LinkedIn account or API key is needed for any of these: LinkedIn pages and Anthropic's API are local fakes, and all other network traffic is blocked.
+No LinkedIn account or API key is needed for any of these: LinkedIn pages and the AI companies' APIs are local fakes, and all other network traffic is blocked.
 
 ## How it is built
 
 | File | Job |
 |---|---|
-| `extension/background.js` | Runs each generation as a **job** and saves every step in `chrome.storage.session`. In AI Mode, calls Claude with your key. |
+| `extension/background.js` | Runs each generation as a **job** and saves every step in `chrome.storage.session`. In AI Mode, calls the AI you picked with your key. |
+| `extension/utils/providers.js` | The AI companies you can pick (Anthropic, Google, OpenAI): names, where each key is saved, and which key belongs to whom. |
 | `extension/utils/writer.js` | What to write: Free Mode's template, the talking points, and the prompt for AI Mode. |
 | `extension/sidepanel.*` | The UI. Draws whatever state is saved; holds no work of its own. |
 | `extension/scraper.js` | Reads a 2026 LinkedIn profile: finds parts by stable test ids and headings, never by class names; loads the lazy sections by scrolling LinkedIn's inner box, then puts your scroll back. |
@@ -134,17 +135,18 @@ No LinkedIn account or API key is needed for any of these: LinkedIn pages and An
 - **It checks who the box is for.** If the open chat is with someone else, or you clicked Connect on someone in "People you may know", the button says so and writes nothing — so a note written for one person never lands in an invite to another.
 - **It leaves LinkedIn's page alone.** The button lives in its own small bar (its own shadow root) inside LinkedIn's box; no LinkedIn element is changed or restyled. LinkedIn's page can see that bar, so it can tell the extension is installed — as with any extension that adds a button to a page.
 - **Free Mode sends nothing anywhere.** The tracker, your settings and your own profile stay in `chrome.storage.local`.
-- **AI Mode sends only what it needs, only to Anthropic.** When you generate, these go to `api.anthropic.com` with your key: the profile you are viewing, your name, bio and goal, what you have in common (from your own profile), and your resume only if you ticked "Use my resume in AI Mode". The key is saved only on this device (shown as a password field) and is sent nowhere else.
+- **AI Mode sends only what it needs, only to the company you picked.** When you generate, these go to that company's API (`api.anthropic.com`, `generativelanguage.googleapis.com` or `api.openai.com`) with your key: the profile you are viewing, your name, bio and goal, what you have in common (from your own profile), and your resume only if you ticked "Use my resume in AI Mode". Each key is saved only on this device (hidden like a password, with Show / Hide) and is sent only to its own company: a key that looks like another company's is never sent.
 - **The extension's scripts on LinkedIn pages cannot read your key or resume.** The extension locks its saved data to its own pages (`chrome.storage.local.setAccessLevel`). LinkedIn's own scripts could never read it.
 - **Only your own clicks count.** The in-page button ignores clicks made by a script in LinkedIn's page, so a page cannot start paid AI runs on your key. Requests from LinkedIn pages may only ask to write into their own tab; everything else is for the side panel.
-- **Fewer permissions.** `tabs` removed. Added only `sidePanel` and `alarms`, which show no install warning. Host access is exactly 3.1.0's: LinkedIn and Anthropic. CI enforces this.
+- **Fewer permissions.** `tabs` removed. Added only `sidePanel` and `alarms`, which show no install warning. Host access is exactly 3.1.0's: LinkedIn and Anthropic. Google's and OpenAI's APIs are optional: no install warning, and Chrome asks only when you pick that company. CI enforces this.
 
 ## Not done yet / known limits
 
-- **AI Mode has not been run against Anthropic's real API.** That needs a real API key. The tests use a fake that follows the Messages API's request and response shapes.
+- **AI Mode has not been run against any company's real API.** That needs real API keys. The tests use fakes that follow each API's documented request and response shapes (Anthropic's Messages API, Google's generateContent, OpenAI's Chat Completions).
+- **Chrome's "Allow" box for Google and OpenAI is not clicked by any test.** The test browser cannot click it. The unit tests fake Chrome's answer (allowed, refused, taken back later), and a real-Chromium check confirmed that the panel shows **Needs permission** and sends nothing until access is allowed.
 - **Checked on live LinkedIn (Nov 2026):** the page reader, on two profiles; the small chat box's structure (inside a shadow root); the "Invite <Name> to connect" labels; and LinkedIn's real message editor taking inserted text. A test line went in, LinkedIn's own Send button turned on, and after Undo the box was empty and Send was off again. Both ways of inserting worked (the browser typing it, and the backup). This was on the Messaging page, whose editor has the same labels and Send button as the small chat box. Nothing was sent.
 - **Not yet checked on live LinkedIn:** the 2026 "Add a note" box itself (the button finds it by role and wording: a dialog about a note or invitation with a text box). It is tested in real Chromium on pages that copy LinkedIn's structure.
 - **The small chat box on a profile, not the full Messaging page.** In a narrow window, LinkedIn opens its full Messaging page instead of the small box. That page keeps the chat in an embedded frame, and the button does not appear there. Copy from the side panel still works.
 - **English LinkedIn only, for the in-page button.** It looks for words like "Messaging", "note", "Invite … to connect". In another language it may not appear; the side panel still works.
 - **The in-page button always uses Quick Mode** (it should be fast). For Deep Mode, use the side panel — both share the same draft.
-- **AI Mode needs each student's own Anthropic key**, as in 3.1.0. Most students do not have one; a small server holding Ark's key would fix that. Ideas are in [docs/AI-MODE.md](docs/AI-MODE.md).
+- **AI Mode needs each student's own API key** (Anthropic, Google or OpenAI), as in 3.1.0. Most students do not have one; a small server holding Ark's key would fix that. Ideas are in [docs/AI-MODE.md](docs/AI-MODE.md).

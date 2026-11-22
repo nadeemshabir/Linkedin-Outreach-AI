@@ -1096,7 +1096,7 @@ describe('the privacy note in Settings', () => {
   it('says what stays on this device, then lists the 4 things AI Mode sends to Anthropic', async () => {
     const panel = await openPanel(world());
     const note  = panel.document.querySelector('.settings-note');
-    const intro = note.firstChild.textContent.replace(/\s+/g, ' ').trim(); // the text before the list
+    const intro = note.querySelector('.settings-note-intro').textContent.replace(/\s+/g, ' ').trim(); // the text before the list
     expect(intro).toBe('Everything is saved only on this device. In Free Mode, nothing leaves it. ' +
       'In AI Mode, these go to Anthropic with your key, for each message:');
     const items = [...note.querySelectorAll('ul.settings-note-list > li')].map((li) => li.textContent.trim());

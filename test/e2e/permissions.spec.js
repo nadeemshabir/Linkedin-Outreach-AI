@@ -1,5 +1,7 @@
 // What the extension may reach. Its host access is LinkedIn, plus Anthropic's
-// API for AI Mode (the same as Ark's 3.1.0, so no new install warning). It
+// API for AI Mode (the same as Ark's 3.1.0, so no new install warning).
+// Google's and OpenAI's APIs are optional: Chrome asks only when you pick that
+// company in Settings, so none is granted at install. It
 // also proves the extension still works without the "tabs" permission (B10):
 // host access to linkedin.com is enough to read LinkedIn tab URLs.
 import { test, expect, serveLinkedInPage } from './extension.js';
@@ -16,6 +18,14 @@ test('manifest asks only for what it uses', async ({ serviceWorker }) => {
 test('host access is LinkedIn and Anthropic\'s API (for AI Mode), nothing else', async ({ serviceWorker }) => {
   const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
   expect([...manifest.host_permissions].sort()).toEqual(['https://api.anthropic.com/*', 'https://www.linkedin.com/*']);
+});
+
+test('Google\'s and OpenAI\'s APIs are optional, and not granted at install', async ({ serviceWorker }) => {
+  const manifest = await serviceWorker.evaluate(() => chrome.runtime.getManifest());
+  expect([...manifest.optional_host_permissions].sort()).toEqual(['https://api.openai.com/*', 'https://generativelanguage.googleapis.com/*']);
+  const granted = await serviceWorker.evaluate(() => chrome.permissions.getAll());
+  expect(granted.origins).not.toContain('https://api.openai.com/*');
+  expect(granted.origins).not.toContain('https://generativelanguage.googleapis.com/*');
 });
 
 test('LinkedIn tab URLs are still readable, other sites stay private', async ({ context, serviceWorker }) => {

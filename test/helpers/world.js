@@ -1,15 +1,23 @@
 // A fake browser for tests. The REAL background and the REAL side panel talk
 // to each other through a fake chrome.* API, the way they do in Chrome.
-// LinkedIn pages and Anthropic's API (AI Mode) are fakes each test controls.
-// With no `userApiKey` in storage, everything runs in Free Mode and nothing
-// is fetched at all.
+// LinkedIn pages and the AI companies' APIs (AI Mode: Anthropic, Google's
+// Gemini, OpenAI) are fakes each test controls. With no key in storage,
+// everything runs in Free Mode and nothing is fetched at all.
 import { vi } from 'vitest';
 import { Window } from 'happy-dom';
-import { createFakeChrome } from './fake-chrome.js';
+import { createFakeChrome, INSTALL_HOSTS } from './fake-chrome.js';
 import { runIsolated, read, pageScripts } from './load.js';
 
 export const ANTHROPIC = 'https://api.anthropic.com';
-export const API_KEY   = 'sk-ant-test-0000'; // fake, for AI Mode tests
+export const GEMINI    = 'https://generativelanguage.googleapis.com';
+export const OPENAI    = 'https://api.openai.com';
+export const API_KEY    = 'sk-ant-test-0000';         // fake Anthropic key, for AI Mode tests
+export const GEMINI_KEY = 'AIza-test-gemini-0000';    // fake Gemini key
+export const OPENAI_KEY = 'sk-proj-test-openai-0000'; // fake OpenAI key
+// The optional host access Google and OpenAI need (Chrome asks for it once).
+export const GEMINI_ORIGIN = `${GEMINI}/*`;
+export const OPENAI_ORIGIN = `${OPENAI}/*`;
+export { INSTALL_HOSTS };
 export const RUNNING   = ['reading', 'enriching', 'writing'];
 
 /** A successful Messages API answer with this text. */
@@ -27,14 +35,48 @@ export function promptText(body) {
   return (content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
 }
 
-// Default fake Claude: "OK" for the key test, else a short note to the
-// first name found in the prompt's profile.
-function defaultClaude(body) {
-  const text = promptText(body);
-  if (/Reply with the single word: OK/.test(text)) return claudeReply('OK');
-  const name = (text.match(/"name":\s*"([^"]+)"/) || [])[1] || 'there';
-  return claudeReply(`Hi ${name.split(' ')[0]}! Would you be open to a quick chat?`);
+/** A successful Gemini generateContent answer with this text. */
+export function geminiReply(text, extra = {}) {
+  return [200, {
+    candidates: [{ content: { role: 'model', parts: [{ text }] }, finishReason: 'STOP', index: 0 }],
+    usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 10, totalTokenCount: 20 },
+    modelVersion: 'gemini-3.5-flash-lite', ...extra,
+  }];
 }
+
+/** The text of the (last) user turn in a Gemini request body. */
+export function geminiPromptText(body) {
+  const turn = body && body.contents && body.contents[body.contents.length - 1];
+  return ((turn && turn.parts) || []).filter((p) => typeof p.text === 'string').map((p) => p.text).join('\n');
+}
+
+/** A successful OpenAI Chat Completions answer with this text. */
+export function openaiReply(text, extra = {}) {
+  return [200, {
+    id: 'chatcmpl-test', object: 'chat.completion', model: 'gpt-6-luna',
+    choices: [{ index: 0, message: { role: 'assistant', content: text, refusal: null }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 }, ...extra,
+  }];
+}
+
+/** The text of the (last) user message in an OpenAI request body. */
+export function openaiPromptText(body) {
+  const user = ((body && body.messages) || []).filter((m) => m.role === 'user');
+  const content = user.length ? user[user.length - 1].content : '';
+  if (typeof content === 'string') return content;
+  return (content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+}
+
+// The default fakes: "OK" for the key test, else a short note to the first
+// name found in the prompt's profile.
+function writeBack(text) {
+  if (/Reply with the single word: OK/.test(text)) return 'OK';
+  const name = (text.match(/"name":\s*"([^"]+)"/) || [])[1] || 'there';
+  return `Hi ${name.split(' ')[0]}! Would you be open to a quick chat?`;
+}
+const defaultClaude = (body) => claudeReply(writeBack(promptText(body)));
+const defaultGemini = (body) => geminiReply(writeBack(geminiPromptText(body)));
+const defaultOpenAI = (body) => openaiReply(writeBack(openaiPromptText(body)));
 
 export function person(slug, name, extra = {}) {
   return {
@@ -56,9 +98,16 @@ const abortError = () => Object.assign(new Error('The operation was aborted.'), 
  * @param {object}   [o.pages]    tabId → profile the content script returns
  * @param {object}   [o.pagesByUrl] url → profile, used when a tab navigates there
  * @param {Function} [o.claude]   Anthropic fake: (body, path) → [status, json] | Response | 'hang'
+ * @param {Function} [o.gemini]   Google's Gemini fake, the same way
+ * @param {Function} [o.openai]   OpenAI fake, the same way
+ * @param {Array}    [o.granted]  host access the extension has (default: the manifest's
+ *                                host_permissions, so Google and OpenAI are not allowed yet)
  */
-export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, pagesByUrl = {}, claude = defaultClaude } = {}) {
-  const { chrome, dispatchMessage } = createFakeChrome({ local, session, tabs });
+export function createWorld({
+  local = {}, session = {}, tabs = [], pages = {}, pagesByUrl = {},
+  claude = defaultClaude, gemini = defaultGemini, openai = defaultOpenAI, granted = INSTALL_HOSTS,
+} = {}) {
+  const { chrome, dispatchMessage } = createFakeChrome({ local, session, tabs, granted });
 
   chrome.tabs.query.mockImplementation(async (q = {}) =>
     tabs.filter((t) => (q.active ? t.active : true)).map((t) => ({ ...t })));
@@ -84,14 +133,18 @@ export function createWorld({ local = {}, session = {}, tabs = [], pages = {}, p
     return reply;
   });
 
-  // Anthropic's API (AI Mode only). Nothing else may be fetched.
+  // The AI companies' APIs (AI Mode only). Nothing else may be fetched.
+  // Each call is kept as { api, url, path, body, headers }.
+  const apis = [[ANTHROPIC, 'anthropic', claude], [GEMINI, 'gemini', gemini], [OPENAI, 'openai', openai]];
   const calls = [];
   const fetch = vi.fn(async (url, init = {}) => {
-    if (!String(url).startsWith(ANTHROPIC)) throw new Error(`Unexpected fetch: ${url}`);
-    const path = url.replace(ANTHROPIC, '');
+    const api = apis.find(([base]) => String(url).startsWith(`${base}/`));
+    if (!api) throw new Error(`Unexpected fetch: ${url}`);
+    const [base, name, answer] = api;
+    const path = url.replace(base, '');
     const body = init.body ? JSON.parse(init.body) : null;
-    calls.push({ path, body, headers: { ...(init.headers || {}) } });
-    const out = await claude(body, path);
+    calls.push({ api: name, url, path, body, headers: { ...(init.headers || {}) } });
+    const out = await answer(body, path);
     if (out === 'hang') {
       return new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(abortError())));
     }
@@ -176,8 +229,22 @@ export async function openPanel(world, { url = 'chrome-extension://test-extensio
   };
   const navigator = { clipboard: { writeText: vi.fn(async () => {}) } };
 
-  const events = [world.chrome.storage.onChanged, world.chrome.tabs.onActivated, world.chrome.tabs.onUpdated];
+  const events = [
+    world.chrome.storage.onChanged, world.chrome.tabs.onActivated, world.chrome.tabs.onUpdated,
+    world.chrome.permissions.onAdded, world.chrome.permissions.onRemoved,
+  ];
   const before = events.map((e) => e.fns.length);
+
+  // A click or key press is a user action while it is handled, as in Chrome:
+  // chrome.permissions.request() works only then. It ends with the handler's
+  // first `await` (the reset below runs before any code after it).
+  const permissions = world.chrome.permissions;
+  const userAction = () => {
+    permissions.gesture = true;
+    queueMicrotask(() => { permissions.gesture = false; });
+  };
+  win.addEventListener('click', userAction, true);
+  win.addEventListener('keydown', userAction, true);
 
   // The page's scripts boot on DOMContentLoaded: capture that handler.
   let boot;

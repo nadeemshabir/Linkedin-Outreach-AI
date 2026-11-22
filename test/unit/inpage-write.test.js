@@ -273,6 +273,7 @@ describe('Write with Ark, inside LinkedIn: AI Mode (your own key)', () => {
     const res = await w.inpage({ channel: 'note', maxChars: 200 });
     expect(res).toEqual({
       ok: true, message: SHORT, reused: false, limit: 200, fit: { changed: false, fits: true, removed: 0 }, resumeSkipped: true,
+      aiCompany: 'Anthropic', // for the bar's "Anthropic could not read the PDF"
     });
     expect(w.calls.map(kinds)).toEqual([['document', 'text'], ['text']]); // written again, without it
 
@@ -322,7 +323,7 @@ describe('Write with Ark, inside LinkedIn: errors', () => {
     const get = w.chrome.storage.local.get;
     const failed = [];
     w.chrome.storage.local.get = (keys, cb) => {
-      if (!cb && [].concat(keys).join() === 'userApiKey') { // reading the saved key on its own fails
+      if (!cb && [].concat(keys).sort().join() === 'aiProvider,userApiKey') { // reading the saved key on its own (with its provider) fails
         failed.push(keys);
         return Promise.reject(new Error('IO error: could not read the storage.'));
       }

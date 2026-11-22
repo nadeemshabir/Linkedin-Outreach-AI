@@ -48,13 +48,64 @@ function makeStorageArea(data, areaName, onChanged) {
   };
 }
 
+// The manifest's host_permissions: granted at install.
+export const INSTALL_HOSTS = ['https://www.linkedin.com/*', 'https://api.anthropic.com/*'];
+
+/**
+ * chrome.permissions, for the optional host access (Google's and OpenAI's
+ * APIs). request() is Chrome's prompt. As in Chrome, it works only during a
+ * user action: `gesture` is true while a click or key press is handled (the
+ * test world sets it), and a call made after an `await` is refused. Access
+ * you already have is confirmed at once, with no prompt. Otherwise `answer`
+ * is what you click in the prompt: 'allow', 'deny', or a function that
+ * returns a promise of one of those (to keep the prompt open). Each prompt
+ * Chrome would show is kept in `prompts` (its origins).
+ */
+function makePermissions(granted) {
+  const set = new Set(granted);
+  const onAdded = makeEvent();
+  const onRemoved = makeEvent();
+  const permissions = {
+    granted: set,
+    answer: 'allow',
+    gesture: false,
+    prompts: [],
+    onAdded,
+    onRemoved,
+    contains: vi.fn(async ({ origins = [] } = {}) => origins.every((o) => set.has(o))),
+    getAll: vi.fn(async () => ({ origins: [...set], permissions: [] })),
+    request: vi.fn(({ origins = [] } = {}) => {
+      if (!permissions.gesture) return Promise.reject(new Error('This function must be called during a user gesture'));
+      const missing = origins.filter((o) => !set.has(o));
+      if (!missing.length) return Promise.resolve(true);
+      permissions.prompts.push(missing);
+      const answer = typeof permissions.answer === 'function' ? permissions.answer(missing) : permissions.answer;
+      return Promise.resolve(answer).then((a) => {
+        if (a !== 'allow') return false;
+        missing.forEach((o) => set.add(o));
+        onAdded.fns.forEach((fn) => fn({ origins: missing, permissions: [] }));
+        return true;
+      });
+    }),
+    // Also what taking access back in chrome://extensions does.
+    remove: vi.fn(async ({ origins = [] } = {}) => {
+      const had = origins.filter((o) => set.has(o));
+      had.forEach((o) => set.delete(o));
+      if (had.length) onRemoved.fns.forEach((fn) => fn({ origins: had, permissions: [] }));
+      return true;
+    }),
+  };
+  return permissions;
+}
+
 /**
  * @param {object} opts
  * @param {object} [opts.local]   initial chrome.storage.local data
  * @param {object} [opts.session] initial chrome.storage.session data
  * @param {Array}  [opts.tabs]    what chrome.tabs.query returns
+ * @param {Array}  [opts.granted] host access the extension has (default: the manifest's host_permissions)
  */
-export function createFakeChrome({ local = {}, session = {}, tabs = [] } = {}) {
+export function createFakeChrome({ local = {}, session = {}, tabs = [], granted = INSTALL_HOSTS } = {}) {
   const onMessage = makeEvent();
   const onChanged = makeEvent();
 
@@ -108,6 +159,7 @@ export function createFakeChrome({ local = {}, session = {}, tabs = [] } = {}) {
       clear: vi.fn(async () => true),
       onAlarm: makeEvent(),
     },
+    permissions: makePermissions(granted),
   };
 
   /**

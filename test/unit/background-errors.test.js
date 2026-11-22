@@ -611,16 +611,16 @@ describe('AI Mode: when your saved key cannot be read (a storage error)', () => 
   const WORKING = { state: 'ai', keyTail: API_KEY.slice(-8), checkedAt: 1 };
 
   /**
-   * From now on, reading the saved key on its own fails, the way Chrome
-   * fails a storage read. (The run's other reads, such as its settings,
-   * still work.) Returns the list of reads that failed, to check this
-   * really happened.
+   * From now on, reading the saved key on its own (with the AI provider it
+   * is for) fails, the way Chrome fails a storage read. (The run's other
+   * reads, such as its settings, still work.) Returns the list of reads that
+   * failed, to check this really happened.
    */
   function failKeyReads(w) {
     const get = w.chrome.storage.local.get;
     const failed = [];
     w.chrome.storage.local.get = (keys, cb) => {
-      if (!cb && [].concat(keys).join() === 'userApiKey') {
+      if (!cb && [].concat(keys).sort().join() === 'aiProvider,userApiKey') {
         failed.push(keys);
         return Promise.reject(new Error(STORAGE_ERROR));
       }

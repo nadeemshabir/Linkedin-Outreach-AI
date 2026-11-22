@@ -30,11 +30,20 @@ let myProfile      = null;   // your own LinkedIn profile, for common ground
 let sender         = {};     // your name and bio, for the message check
 let contact        = null;   // this person's entry in your tracker, if any
 let trackerFilter  = 'all';
-let failedTest     = null;   // { key, reason, code }: the key Test last failed with (not saved yet)
+let failedTest     = null;   // { key, provider, reason, code }: the key Test last failed with (not saved yet)
+// The AI company shown in Settings. Picking one applies at once (the next
+// message is written by it); each company keeps its own key.
+let shownProvider  = null;
+let savedKeys      = {};     // provider id → the key saved for it
+let keyDrafts      = {};     // provider id → what you typed in its key box, not saved (while another is shown)
 // Test results that mean AI Mode cannot work with the key until you act (as
 // in background.js). The header says which; the key itself may be fine.
-const KEY_PROBLEMS   = ['auth', 'billing', 'spend_limit', 'bad_key', 'model'];
-const INVALID_LABELS = { billing: 'Billing problem', spend_limit: 'Spend limit reached', model: 'AI Mode not available' };
+const KEY_PROBLEMS   = ['auth', 'billing', 'spend_limit', 'bad_key', 'model', 'region'];
+const INVALID_LABELS = {
+  billing: 'Billing problem', spend_limit: 'Spend limit reached', model: 'AI Mode not available', region: 'AI Mode not available',
+  // Seen without asking anyone: a key that is another company's, and no OK from Chrome (yet) to reach Google or OpenAI.
+  wrong_provider: 'Wrong provider', permission: 'Needs permission',
+};
 // The last 8 characters of a key: enough to tell keys apart, not enough to
 // use one. (The same length as in background.js.)
 const keyTail = (key) => String(key || '').trim().slice(-8);
@@ -59,24 +68,37 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // ─── Free Mode or AI Mode, in the header ─────────────────────────────────────
-// No key: Free Mode (a template, on this device, free). Your own Anthropic
-// key: AI Mode (Claude writes it). If Anthropic refused that key last time,
-// the badge says so, with the reason. Nothing is checked over the network
+// No key for the AI company you picked: Free Mode (a template, on this
+// device, free). Your own key for it: AI Mode (its AI writes it). If the
+// company refused that key last time, the badge says so, with the reason.
+// So does a key that is another company's, and a company Chrome has not
+// allowed the extension to reach yet. Nothing is checked over the network
 // just to draw the badge.
 async function renderMode() {
-  const s   = await loadStoredSettings();
-  const key = (s.userApiKey || '').trim();
-  const { keyStatus } = await storageGet(['keyStatus']);
-  const refused = !!key && !!keyStatus && keyStatus.state === 'invalid' && keyStatus.keyTail === keyTail(key);
-  renderKeyStatus(!key ? { state: 'free' } : refused ? keyStatus : { state: 'ai' });
+  const s        = await storageGet(['aiProvider', 'keyStatus', ...Providers.KEY_FIELDS]);
+  const provider = Providers.get(s.aiProvider);
+  const key      = String(s[provider.keyField] || '').trim();
+  const owner    = Providers.keyOwner(key);
+  let st;
+  if (!key)                                     st = { state: 'free' };
+  else if (owner && owner !== provider.id)      st = { state: 'invalid', code: 'wrong_provider', reason: Providers.wrongKeyText(owner, provider.id) };
+  else if (!(await hasAccess(provider)))        st = { state: 'invalid', code: 'permission', reason: Providers.noAccessText(provider.id) };
+  else if (isRefused(s.keyStatus, key, provider.id)) st = s.keyStatus;
+  else                                          st = { state: 'ai' };
+  renderKeyStatus(st, provider);
 }
 
-function renderKeyStatus(st) {
+// The saved status says this key (for this company) was refused.
+function isRefused(st, key, providerId) {
+  return !!key && !!st && st.state === 'invalid' && st.keyTail === keyTail(key) && Providers.statusProvider(st) === providerId;
+}
+
+function renderKeyStatus(st, provider = Providers.get()) {
   const views = {
     free:    { text: '● Free Mode',     cls: 'free',     title: 'No key: messages are written from a template on this device, for free.' },
-    ai:      { text: '● AI Mode',       cls: 'active',   title: 'Claude writes the messages, with your own Anthropic key.' },
+    ai:      { text: '● AI Mode',       cls: 'active',   title: `${provider.writer} writes the messages, with your own ${provider.company} key.` },
     invalid: { text: INVALID_LABELS[st.code] || 'Key not working', cls: 'inactive', title: '',
-               warn: st.reason || 'Your Anthropic API key was not accepted. Check it in Settings, or remove it to use Free Mode.' },
+               warn: st.reason || `Your ${provider.keyLabel} was not accepted. Check it in Settings, or remove it to use Free Mode.` },
   };
   const view  = views[st.state] || views.free;
   const badge = document.getElementById('key-status');
@@ -189,16 +211,29 @@ function watchBrowser() {
       job = changes[id].newValue || null;
       renderJob();
     }
-    if (area === 'local' && (changes.keyStatus || changes.userApiKey)) renderMode();
+    if (area === 'local' && (changes.keyStatus || changes.aiProvider || Providers.KEY_FIELDS.some(f => changes[f]))) renderMode();
     // The key worked (a run, or a Test elsewhere): forget its failed Test.
     const status = area === 'local' && changes.keyStatus && changes.keyStatus.newValue;
-    if (status && status.state === 'ai' && failedTest && keyTail(failedTest.key) === status.keyTail) failedTest = null;
+    if (status && status.state === 'ai' && failedTest && keyTail(failedTest.key) === status.keyTail
+        && failedTest.provider === Providers.statusProvider(status)) failedTest = null;
     // Settings changed in another window's panel: show the new values, so a
     // Save here does not put the old ones back. (A box you are editing here
     // keeps your edit.)
     if (area === 'local' && changes.resumeForAI) document.getElementById('resume-for-ai').checked = changes.resumeForAI.newValue === true;
     if (area === 'local') {
-      for (const [key, id] of [['userApiKey', 'api-key'], ['userName', 'user-name'], ['userBio', 'user-bio']]) {
+      // Each company's own key. The key box shows the one for the company
+      // picked here.
+      for (const p of Providers.LIST) {
+        const change = changes[p.keyField];
+        if (!change) continue;
+        savedKeys[p.id] = change.newValue || '';
+        const box = document.getElementById('api-key');
+        if (p.id === shownProvider && box.value.trim() === String(change.oldValue || '').trim()) box.value = change.newValue || '';
+      }
+      // Another window's panel picked another company: show it here too.
+      const picked = changes.aiProvider && Providers.get(changes.aiProvider.newValue).id;
+      if (picked && picked !== shownProvider) showProvider(picked);
+      for (const [key, id] of [['userName', 'user-name'], ['userBio', 'user-bio']]) {
         if (!changes[key]) continue;
         const box = document.getElementById(id);
         if (box.value.trim() === String(changes[key].oldValue || '').trim()) box.value = changes[key].newValue || '';
@@ -227,6 +262,12 @@ function watchBrowser() {
       renderStrength();
     }
   });
+  // You allowed (or took back) the extension's access to Google's or
+  // OpenAI's API: in Chrome's prompt, or later in chrome://extensions.
+  if (chrome.permissions && chrome.permissions.onAdded) {
+    chrome.permissions.onAdded.addListener(() => renderMode());
+    chrome.permissions.onRemoved.addListener(() => renderMode());
+  }
   // A run whose worker died stops sending heartbeats. Check now and then.
   setInterval(() => { if (job && RUNNING_STEPS.includes(job.step)) renderJob(); }, 10000);
 }
@@ -448,8 +489,9 @@ function renderJob() {
 }
 
 function doneText(j) {
-  const how = { free: ' Written in Free Mode.', ai: ' Written by Claude.' }[j.writer] || '';
-  const resume = j.resumeSkipped ? ' Anthropic could not read your resume PDF, so it was left out. Replace or remove it in Settings.' : '';
+  const ai  = Providers.get(j.provider); // whose AI wrote it (Anthropic's, for runs from before the choice)
+  const how = { free: ' Written in Free Mode.', ai: ` Written by ${ai.writer}.` }[j.writer] || '';
+  const resume = j.resumeSkipped ? ` ${ai.company} could not read your resume PDF, so it was left out. Replace or remove it in Settings.` : '';
   return `Message ready.${how}${resume}`;
 }
 
@@ -619,6 +661,10 @@ async function handleRemoveMe() {
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 function wireSettingsEvents() {
+  const providerList = document.getElementById('ai-provider');
+  providerList.innerHTML = Providers.LIST.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  providerList.addEventListener('change', handleProviderChange);
+  document.getElementById('show-key-btn').addEventListener('click', () => setKeyShown(document.getElementById('api-key').type === 'password'));
   document.getElementById('save-settings-btn').addEventListener('click', handleSaveSettings);
   document.getElementById('validate-btn').addEventListener('click', handleTestKey);
   document.getElementById('api-key').addEventListener('keydown', e => {
@@ -662,7 +708,9 @@ async function loadSettings() {
   const s = await loadStoredSettings();
   document.getElementById('linkedin-plan').value = linkedinPlan;
   renderMeStatus();
-  if (s.userApiKey) document.getElementById('api-key').value = s.userApiKey;
+  for (const p of Providers.LIST) savedKeys[p.id] = s[p.keyField] || '';
+  shownProvider = null; // fill the key box from what is saved, even if a change already showed this company
+  showProvider(Providers.get(s.aiProvider).id);
   if (s.userName)   document.getElementById('user-name').value   = s.userName;
   if (s.userBio)    document.getElementById('user-bio').value    = s.userBio;
   // Off unless you turned it on here (a resume kept from 3.1.0 was never
@@ -679,12 +727,96 @@ async function loadSettings() {
   }
 }
 
+// ─── The AI company (AI Mode) ────────────────────────────────────────────────
+// Picking one applies at once, like the LinkedIn plan: the next message is
+// written by its AI, with the key saved for it. Each company keeps its own
+// key, so switching back and forth never loses one.
+async function handleProviderChange(e) {
+  const id = Providers.get(e.target.value).id;
+  showProvider(id);
+  await storageSet({ aiProvider: id });
+}
+
+// Show this company in Settings: its saved key (or what you typed for it
+// and did not save), its words, and the key hidden again.
+function showProvider(id) {
+  const provider = Providers.get(id);
+  const box = document.getElementById('api-key');
+  if (shownProvider !== provider.id) {
+    if (shownProvider) {
+      // Keep what you typed for the company you leave, while it is not saved.
+      if (box.value.trim() !== String(savedKeys[shownProvider] || '').trim()) keyDrafts[shownProvider] = box.value;
+      else delete keyDrafts[shownProvider];
+    }
+    box.value = provider.id in keyDrafts ? keyDrafts[provider.id] : (savedKeys[provider.id] || '');
+    delete keyDrafts[provider.id];
+    // An old Test result is about another company's key.
+    document.getElementById('key-validation-status').classList.add('hidden');
+  }
+  shownProvider = provider.id;
+  document.getElementById('ai-provider').value = provider.id;
+  document.getElementById('api-key-label').textContent = `${provider.keyLabel} (optional)`;
+  box.placeholder = provider.placeholder;
+  document.getElementById('key-hint').textContent = keyHint(provider);
+  setKeyShown(false);
+  // "It is sent to Google…", "…so Gemini can say…", "AI Mode: by Gemini".
+  document.querySelectorAll('.ai-company').forEach(el => { el.textContent = provider.company; });
+  document.querySelectorAll('.ai-writer').forEach(el => { el.textContent = provider.writer; });
+}
+
+function keyHint(p) {
+  const ask = p.optional ? ` The first time you press Test or Save, Chrome asks you to let the extension reach ${p.host}.` : '';
+  return `Get a key at ${p.keyPage}. It is kept only on this device, hidden like a password, and sent only to ${p.company}.${ask}`;
+}
+
+// The key is hidden like a password. "Show" lets you check what you pasted.
+function setKeyShown(show) {
+  const box = document.getElementById('api-key');
+  const btn = document.getElementById('show-key-btn');
+  box.type = show ? 'text' : 'password';
+  btn.textContent = show ? 'Hide' : 'Show';
+  btn.setAttribute('aria-pressed', String(show));
+  btn.setAttribute('aria-label', show ? 'Hide the key' : 'Show the key');
+}
+
+// Google's and OpenAI's APIs are optional in the manifest: Chrome asks you
+// once. Anthropic's was allowed at install, as in 3.1.0.
+async function hasAccess(provider) {
+  if (!provider.optional) return true;
+  try {
+    return await chrome.permissions.contains({ origins: [provider.origin] });
+  } catch (_) {
+    return false;
+  }
+}
+
+// Asks Chrome for access to this company's API. Call it straight from your
+// click, before any await: Chrome shows its prompt only during a user
+// action. Allowed already: true at once, with no prompt. Never rejects.
+function requestAccess(provider) {
+  if (!provider.optional) return Promise.resolve(true);
+  try {
+    return Promise.resolve(chrome.permissions.request({ origins: [provider.origin] })).then(Boolean, () => false);
+  } catch (_) {
+    return Promise.resolve(false);
+  }
+}
+
+const notAllowedText = (p) => `Chrome did not allow the extension to reach ${p.company} (${p.host})`;
+
 async function handleSaveSettings() {
+  const provider   = Providers.get(document.getElementById('ai-provider').value);
   const userApiKey = document.getElementById('api-key').value.trim(); // keys are case-sensitive
   const userName   = document.getElementById('user-name').value.trim();
   const userBio    = document.getElementById('user-bio').value.trim();
+  // A key that is another company's is saved as you typed it, but never
+  // sent anywhere: the header says why.
+  const owner    = Providers.keyOwner(userApiKey);
+  const wrongKey = !!userApiKey && !!owner && owner !== provider.id;
+  // Google or OpenAI: ask Chrome now, while this click still counts as yours.
+  const access = userApiKey && !wrongKey && provider.optional ? requestAccess(provider) : null;
 
-  const savePayload = { userApiKey, userName, userBio };
+  const savePayload = { [provider.keyField]: userApiKey, userName, userBio };
   if (pendingResume) {
     // A new file is saved with the box's choice for it. (For a resume that
     // is already saved, the box saves itself, so Save leaves it alone: an
@@ -704,16 +836,20 @@ async function handleSaveSettings() {
   // You pressed Test, it failed, and now you save that same key: the header
   // must not say "AI Mode" as if it works. Used once: from now on keyStatus
   // keeps it, and the background clears it when the key works.
-  if (userApiKey && failedTest && failedTest.key === userApiKey) {
-    await storageSet({ keyStatus: { state: 'invalid', keyTail: keyTail(userApiKey), reason: failedTest.reason, code: failedTest.code, checkedAt: Date.now() } });
+  if (userApiKey && failedTest && failedTest.key === userApiKey && failedTest.provider === provider.id) {
+    await storageSet({ keyStatus: Providers.tagStatus({ state: 'invalid', keyTail: keyTail(userApiKey), reason: failedTest.reason, code: failedTest.code, checkedAt: Date.now() }, provider.id) });
   }
   failedTest = null;
+  setKeyShown(false);
 
   // An old "Test" result may not be true any more.
   document.getElementById('key-validation-status').classList.add('hidden');
+  const allowed = access ? await access : true;
   const { keyStatus } = await storageGet(['keyStatus']);
-  const stillRefused = !!userApiKey && !!keyStatus && keyStatus.state === 'invalid' && keyStatus.keyTail === keyTail(userApiKey);
+  const stillRefused = isRefused(keyStatus, userApiKey, provider.id);
   if (!userApiKey)       showSettingsStatus('Settings saved! Free Mode is on (no key).', 'success');
+  else if (wrongKey)     showSettingsStatus(`Settings saved, but AI Mode cannot work yet. ${Providers.wrongKeyText(owner, provider.id)}`, 'error');
+  else if (!allowed)     showSettingsStatus(`Settings saved, but ${notAllowedText(provider)}, so AI Mode cannot use ${provider.writer} yet. Press Test and choose Allow.`, 'error');
   else if (stillRefused) showSettingsStatus('Settings saved. AI Mode is still not working: press Test to check again.', 'error');
   else                   showSettingsStatus('Settings saved! AI Mode is on.', 'success');
   await renderMode();
@@ -756,39 +892,58 @@ async function handleRemoveResume() {
   showSettingsStatus('Resume removed.', 'success');
 }
 
-// "Test" sends one tiny request to Anthropic with the key. A working key is
-// saved at once, so AI Mode starts right away.
+// "Test" sends one tiny request, with the key, to the company you picked. A
+// working key is saved at once, so AI Mode starts right away. For Google and
+// OpenAI, Chrome first asks you to let the extension reach them (once).
 async function handleTestKey() {
+  const provider = Providers.get(document.getElementById('ai-provider').value);
   const apiKey = document.getElementById('api-key').value.trim();
   const el = document.getElementById('key-validation-status');
   if (!apiKey) {
-    el.textContent = 'Paste your Anthropic API key first. Leave it empty to use Free Mode.';
+    el.textContent = `Paste your ${provider.keyLabel} first. Leave it empty to use Free Mode.`;
     el.className   = 'key-validation-status invalid';
     return;
   }
+  // Another company's key is never sent anywhere.
+  const owner = Providers.keyOwner(apiKey);
+  if (owner && owner !== provider.id) {
+    el.textContent = `✗ ${Providers.wrongKeyText(owner, provider.id)}`;
+    el.className   = 'key-validation-status invalid';
+    return;
+  }
+  // Google or OpenAI: ask Chrome first, while this click (or Enter) still
+  // counts as yours.
+  const access = provider.optional ? requestAccess(provider) : null;
 
   const btn = document.getElementById('validate-btn');
   btn.textContent = '…';
   btn.disabled = true;
-  const result = await sendMessage({ type: 'TEST_API_KEY', payload: { apiKey } });
+  const allowed = access ? await access : true;
+  const result = allowed ? await sendMessage({ type: 'TEST_API_KEY', payload: { apiKey, provider: provider.id } }) : null;
   btn.textContent = 'Test';
   btn.disabled = false;
 
-  // You changed the key while the test ran: this result is about another
-  // key, so it is not used (and that key is not saved).
-  if (document.getElementById('api-key').value.trim() !== apiKey) return;
+  // You changed the key (or the company) while the test ran: this result is
+  // about another key, so it is not used (and that key is not saved).
+  if (document.getElementById('api-key').value.trim() !== apiKey || shownProvider !== provider.id) return;
 
+  if (!allowed) {
+    el.textContent = `✗ ${notAllowedText(provider)}. Press Test again and choose Allow, or pick another AI provider.`;
+    el.className   = 'key-validation-status invalid';
+    await renderMode();
+    return;
+  }
   if (result && result.valid) {
     failedTest = null;
     el.textContent = '✓ Key works. AI Mode is on.';
     el.className   = 'key-validation-status valid';
-    await storageSet({ userApiKey: apiKey, keyStatus: { state: 'ai', keyTail: keyTail(apiKey), checkedAt: Date.now() } });
+    await storageSet({ [provider.keyField]: apiKey, keyStatus: Providers.tagStatus({ state: 'ai', keyTail: keyTail(apiKey), checkedAt: Date.now() }, provider.id) });
     await renderMode();
   } else {
     const reason = (result && result.reason) || 'The key did not work.';
     // Remembered for Save (see handleSaveSettings). "Busy" or "no internet"
     // says nothing about the key, so it is not remembered.
-    failedTest = result && KEY_PROBLEMS.includes(result.code) ? { key: apiKey, reason, code: result.code } : null;
+    failedTest = result && KEY_PROBLEMS.includes(result.code) ? { key: apiKey, provider: provider.id, reason, code: result.code } : null;
     el.textContent = `✗ ${reason}`;
     el.className   = 'key-validation-status invalid';
     await renderMode();
@@ -1112,7 +1267,7 @@ function processResumeFile(file) {
 
 function loadStoredSettings() {
   return new Promise(resolve => {
-    chrome.storage.local.get(['userApiKey','userName','userBio','resumeBase64','resumeFileName','resumeForAI'], resolve);
+    chrome.storage.local.get(['aiProvider', ...Providers.KEY_FIELDS, 'userName','userBio','resumeBase64','resumeFileName','resumeForAI'], resolve);
   });
 }
 

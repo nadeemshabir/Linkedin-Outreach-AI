@@ -4,26 +4,44 @@
 // Since Ark's 3.1.0 there is no Ark server and no license key. The message is
 // written in one of two ways:
 //   Free Mode (no key): from a template, on this device (utils/writer.js)
-//   AI Mode: by Claude, with the user's OWN Anthropic API key, called directly
-//            from here (the key never goes anywhere else)
+//   AI Mode: by the AI company the user picked in Settings (Anthropic,
+//            Google or OpenAI, see utils/providers.js), with the user's OWN
+//            API key for it, called directly from here (the key never goes
+//            anywhere else)
 //
 // The background owns every generation "job":
 //   read the profile → (Deep Mode: find talking points) → write the message.
 // Each step is saved in chrome.storage.session, so closing the side panel
 // never loses work. The panel only draws the saved state.
 
-importScripts('utils/profile-url.js', 'utils/limits.js', 'utils/common-ground.js', 'utils/tracker.js', 'utils/writer.js');
+importScripts('utils/profile-url.js', 'utils/limits.js', 'utils/common-ground.js', 'utils/tracker.js', 'utils/writer.js', 'utils/providers.js');
 
-// AI Mode. Ark's 3.1.0 chose Claude Haiku 5.5: fast, and very cheap for a
-// student paying with their own key. A bigger model writes better, but costs
-// far more. To change the model, change the thinking setting with it:
-//   Haiku 5.5:  { type: 'disabled' } (a short note needs no thinking, and
-//               thinking would use up max_tokens)
+// AI Mode. Each company's small, fast model: very cheap for a student paying
+// with their own key. A bigger model writes better, but costs far more.
+// Thinking is turned off (or as low as it goes) for each: a short note needs
+// none, and thinking counts against the output limit, so a note could come
+// back cut off (3.1.0's 400-token messages could).
+//
+// Anthropic. Ark's 3.1.0 chose Claude Haiku 5.5. To change the model, change
+// the thinking setting with it:
+//   Haiku 5.5:  { type: 'disabled' }
 //   Sonnet 5.5: { type: 'between_tools' }
 //   Opus 5.5:   null (thinking cannot be turned off; lower the effort instead)
 const ANTHROPIC_URL      = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_MODEL    = 'claude-haiku-5-5';
 const ANTHROPIC_THINKING = { type: 'disabled' };
+// Google. Gemini 3.5 Flash-Lite (stable). Its thinking cannot be turned off;
+// MINIMAL is the lowest level ("little to no thinking"). Gemini 3 and later
+// take thinkingLevel; older models took thinkingBudget instead.
+const GEMINI_URL      = 'https://generativelanguage.googleapis.com/v1beta/models';
+const GEMINI_MODEL    = 'gemini-3.5-flash-lite';
+const GEMINI_THINKING = { thinkingLevel: 'MINIMAL' };
+// OpenAI. GPT-6 Luna, OpenAI's model for cheap, high-volume work. It is a
+// reasoning model: reasoning_effort 'none' turns the reasoning off.
+const OPENAI_URL       = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_MODEL     = 'gpt-6-luna';
+const OPENAI_REASONING = 'none';
+
 const AI_TIMEOUT_MS      = 30000;
 const RESUME_EXTRA_MS    = 30000; // a resume PDF takes longer to upload
 
@@ -41,7 +59,7 @@ if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
 }
 
 // ─── Your key and resume stay out of LinkedIn's pages ────────────────────────
-// chrome.storage.local holds your Anthropic key and your resume. By default,
+// chrome.storage.local holds your API keys and your resume. By default,
 // the scripts this extension runs on linkedin.com could read it too. They
 // never need to, so only the extension's own pages and this worker may.
 // Set each time the worker starts. (A Chrome that cannot do this for local
@@ -66,7 +84,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // Keys from before 3.1.0 (Ark's license key and its server status) are of no
-// use any more. AI Mode uses the user's own Anthropic key (userApiKey).
+// use any more. AI Mode uses the user's own key (see utils/providers.js).
 async function forgetLicenseKey() {
   try {
     const { keyStatus } = await chrome.storage.local.get('keyStatus');
@@ -228,7 +246,9 @@ async function inpageWrite({ tabId, channel, maxChars }) {
     limit,
     fit:     fit && { changed: fit.changed, fits: fit.fits, removed: fit.removed.length },
     // The bar says so, as the side panel does: you may never open the panel.
-    resumeSkipped: !!job.resumeSkipped
+    resumeSkipped: !!job.resumeSkipped,
+    // In AI Mode: the company whose AI wrote it ("Google could not read the PDF").
+    ...(job.writer === 'ai' && { aiCompany: Providers.get(job.provider).company })
   };
 }
 
@@ -266,7 +286,8 @@ async function runJob(job) {
     await saveJob(job);
   };
 
-  let apiKey = ''; // the key this run used (if a 401 comes back, it is this key)
+  let apiKey   = '';              // the key this run used (if a 401 comes back, it is this key)
+  let provider = Providers.get(); // and whose key it is
   try {
     if (!job.profile) {
       await setStep(job, 'reading');
@@ -293,7 +314,8 @@ async function runJob(job) {
 
     await setStep(job, 'writing');
     const settings = await getSettings();
-    apiKey = String(settings.userApiKey || '').trim();
+    provider = Providers.get(settings.aiProvider);
+    apiKey   = String(settings[provider.keyField] || '').trim();
     const brief = {
       profile:      job.profile,
       channel:      job.channel,
@@ -307,12 +329,13 @@ async function runJob(job) {
       variant:      job.variant || 0
     };
     if (apiKey) {
-      // The resume goes to Anthropic only if you said yes in Settings. (3.1.0
+      // The resume goes to the AI only if you said yes in Settings. (3.1.0
       // kept a resume but never sent it, so an update must not start to.)
       const resume = settings.resumeForAI === true && settings.resumeBase64 ? settings.resumeBase64 : null;
-      const out = await writeWithClaude(apiKey, brief, resume);
+      const out = await writeWithAI(provider, apiKey, brief, resume);
       job.message       = out.text;
       job.resumeSkipped = out.resumeSkipped;
+      job.provider      = provider.id;
     } else {
       job.message = Writer.local(brief);
     }
@@ -320,7 +343,7 @@ async function runJob(job) {
     job.messageId = Date.now();
     // Bookkeeping first, so "done" really means done.
     await saveToTracker(job).catch(() => {});
-    if (apiKey && await isSavedKey(apiKey)) await noteKeyWorks(apiKey).catch(() => {});
+    if (apiKey && await isSavedKey(apiKey, provider.id)) await noteKeyWorks(apiKey, provider.id).catch(() => {});
     job.step       = 'done';
     job.finishedAt = Date.now();
     await end();
@@ -328,26 +351,22 @@ async function runJob(job) {
     job.failedStep = job.step;
     job.step       = 'error';
     job.error      = { message: err.message, code: err.code || null };
-    // Only about the key you have now: a slow run with your old key must not
-    // mark (or clear) the key you pasted since.
-    if (KEY_PROBLEMS.has(err.code) && await isSavedKey(apiKey)) await noteKeyRejected(err.message, apiKey, err.code).catch(() => {});
+    // Only about the key you have now: a slow run with your old key (or with
+    // the company you picked before) must not mark (or clear) the key you
+    // pasted since.
+    if (KEY_PROBLEMS.has(err.code) && await isSavedKey(apiKey, provider.id)) await noteKeyRejected(err.message, apiKey, err.code, provider.id).catch(() => {});
     await end();
   }
 }
 
-// AI Mode: Claude writes it, with the user's own key. Instructions go in the
-// system prompt; the profile goes in the message, marked as someone else's
-// text. The resume (only if you turned that on) goes first, as a PDF.
-async function writeWithClaude(apiKey, brief, resumeBase64) {
+// AI Mode: the AI you picked writes it, with your own key. Instructions go
+// in the system prompt; the profile goes in the message, marked as someone
+// else's text. The resume (only if you turned that on) goes first, as a PDF.
+async function writeWithAI(provider, apiKey, brief, resumeBase64) {
   const write = async (resume) => {
     const { system, user } = Writer.prompt({ ...brief, hasResume: !!resume });
-    const content = [];
-    if (resume) {
-      content.push({ type: 'document', title: 'My resume (the sender)', source: { type: 'base64', media_type: 'application/pdf', data: resume } });
-    }
-    content.push({ type: 'text', text: user });
     const timeoutMs = AI_TIMEOUT_MS + (resume ? RESUME_EXTRA_MS : 0);
-    return Writer.cleanReply(await callClaude(apiKey, { system, content, maxTokens: 1024, timeoutMs }));
+    return Writer.cleanReply(await callAI(provider, apiKey, { system, text: user, resume, maxTokens: 1024, timeoutMs }));
   };
 
   let text;
@@ -358,15 +377,16 @@ async function writeWithClaude(apiKey, brief, resumeBase64) {
     // A resume makes every request bigger, so on a slow connection it can
     // be what runs out the time limit. Say so.
     if (resumeBase64 && err.code === 'timeout') {
-      throw claudeError(`${err.message.replace(/ Please try again\.$/, '')} Your resume is sent with each message, which makes it slower: try again, or untick "Use my resume in AI Mode" in Settings.`, 'timeout');
+      throw aiError(`${err.message.replace(/ Please try again\.$/, '')} Your resume is sent with each message, which makes it slower: try again, or untick "Use my resume in AI Mode" in Settings.`, 'timeout');
     }
-    // Anthropic reads only standard PDFs (no password, not a renamed file).
-    // If it refuses the request because of the resume, write it without.
+    // The AIs read only standard PDFs (no password, not a renamed file), and
+    // a model may not take PDFs at all. If the request is refused because of
+    // the resume, write it without.
     if (!resumeBase64 || !['bad_request', 'too_large'].includes(err.code)) throw err;
     text = await write(null);
     resumeSkipped = true;
   }
-  if (!text) throw claudeError('Claude sent back an empty message. Please try again.', 'empty');
+  if (!text) throw aiError(`${provider.writer} sent back an empty message. Please try again.`, 'empty');
   return { text, resumeSkipped };
 }
 
@@ -496,39 +516,51 @@ function getTab(tabId) {
   return chrome.tabs.get(tabId).catch(() => null);
 }
 
-// ─── Your own Anthropic key (AI Mode) ────────────────────────────────────────
-// "Test" sends a tiny real request, so a key with no credit left is caught
-// too (a cheaper check of the key alone would pass it).
-async function testApiKey({ apiKey }) {
+// ─── Your own API key (AI Mode) ──────────────────────────────────────────────
+// "Test" sends a tiny real request to the company you picked, so a key with
+// no credit left is caught too (a cheaper check of the key alone would pass
+// it). The panel asks Chrome for access to Google's or OpenAI's API first.
+async function testApiKey({ apiKey, provider: providerId }) {
+  const provider = Providers.get(providerId);
   const key = String(apiKey || '').trim();
   if (!key) return { valid: false, reason: 'Paste your key first.', code: 'empty' };
+  let failure = null;
   try {
-    await callClaude(key, { content: 'Reply with the single word: OK', maxTokens: 16 });
+    await callAI(provider, key, { text: 'Reply with the single word: OK', plain: true, maxTokens: 16 });
+  } catch (err) {
+    // Cut off at the tiny limit: the key was accepted all the same.
+    if (err.code !== 'max_tokens') failure = err;
+  }
+  if (!failure) {
     // Only for the saved key. A new key that works is saved by the panel,
     // with its status, if the panel is still open and the box still holds it.
-    if (await isSavedKey(key)) await noteKeyWorks(key).catch(() => {});
+    if (await isSavedKey(key, provider.id)) await noteKeyWorks(key, provider.id).catch(() => {});
     return { valid: true };
-  } catch (err) {
-    // A failed test of the saved key also changes the badge ("Key not
-    // working"…). A new key that fails is not saved yet: the panel remembers
-    // the failure, for when you press Save.
-    if (KEY_PROBLEMS.has(err.code) && await isSavedKey(key)) await noteKeyRejected(err.message, key, err.code).catch(() => {});
-    return { valid: false, reason: err.message, code: err.code || null };
   }
+  // A failed test of the saved key also changes the badge ("Key not
+  // working"…). A new key that fails is not saved yet: the panel remembers
+  // the failure, for when you press Save.
+  if (KEY_PROBLEMS.has(failure.code) && await isSavedKey(key, provider.id)) await noteKeyRejected(failure.message, key, failure.code, provider.id).catch(() => {});
+  return { valid: false, reason: failure.message, code: failure.code || null };
 }
 
 // Failures that mean AI Mode cannot work with this key until you act: a
 // refused key, no credit, a spend limit, a key with a character that cannot
-// be in a key, or a key that cannot use the model. ("Busy" or "no internet"
-// says nothing about the key.)
-const KEY_PROBLEMS = new Set(['auth', 'billing', 'spend_limit', 'bad_key', 'model']);
+// be in a key, a key that cannot use the model, or a company that does not
+// offer its API where you are. ("Busy" or "no internet" says nothing about
+// the key. A key for another company, or no access from Chrome yet, is
+// shown by the panel without asking anyone, so it is not saved here.)
+const KEY_PROBLEMS = new Set(['auth', 'billing', 'spend_limit', 'bad_key', 'model', 'region']);
 
-// Never throws: if storage cannot be read, the key is treated as not saved
-// (nothing is marked), and the run still ends normally.
-async function isSavedKey(key) {
+// Is `key` the key saved for `providerId`, and is that the company picked
+// now? Never throws: if storage cannot be read, the key is treated as not
+// saved (nothing is marked), and the run still ends normally.
+async function isSavedKey(key, providerId) {
   try {
-    const { userApiKey } = await chrome.storage.local.get('userApiKey');
-    return !!key && String(userApiKey || '').trim() === String(key).trim();
+    const provider = Providers.get(providerId);
+    const saved = await chrome.storage.local.get(['aiProvider', provider.keyField]);
+    return !!key && Providers.get(saved.aiProvider).id === provider.id
+      && String(saved[provider.keyField] || '').trim() === String(key).trim();
   } catch (_) {
     return false;
   }
@@ -538,88 +570,129 @@ async function isSavedKey(key) {
 // "Billing problem", "Spend limit reached", "AI Mode not available") with
 // the reason. Only the key's last 8 characters are kept here, to know which
 // key it is about. (Anthropic keys end in "AA", so 4 were too few.) The
-// panel uses the same length.
+// panel uses the same length. For Google and OpenAI keys, the status also
+// says whose key it is (Providers.tagStatus).
 const keyTail = (key) => String(key || '').trim().slice(-8);
 
-async function noteKeyWorks(key) {
-  await chrome.storage.local.set({ keyStatus: { state: 'ai', keyTail: keyTail(key), checkedAt: Date.now() } });
+async function noteKeyWorks(key, providerId) {
+  await chrome.storage.local.set({ keyStatus: Providers.tagStatus({ state: 'ai', keyTail: keyTail(key), checkedAt: Date.now() }, providerId) });
 }
 
 // `key` is the key the failed request used. Callers check first that it is
 // still the saved key (you may have pasted another one in the meantime).
-async function noteKeyRejected(reason, key, code) {
-  await chrome.storage.local.set({ keyStatus: { state: 'invalid', keyTail: keyTail(key), reason, code: code || null, checkedAt: Date.now() } });
+async function noteKeyRejected(reason, key, code, providerId) {
+  await chrome.storage.local.set({ keyStatus: Providers.tagStatus({ state: 'invalid', keyTail: keyTail(key), reason, code: code || null, checkedAt: Date.now() }, providerId) });
 }
 
-// ─── Calling Claude ──────────────────────────────────────────────────────────
-// One place for every request: a time limit, safe JSON reading, and error
-// messages a student can understand. Called straight from the extension with
-// the user's own key; the extra header tells Anthropic that is intended.
-async function callClaude(apiKey, { system, content, maxTokens, timeoutMs = AI_TIMEOUT_MS }) {
+// ─── Calling the AI ──────────────────────────────────────────────────────────
+// One place for every request, whichever company you picked: a time limit,
+// safe JSON reading, and error messages a student can understand. Each
+// company has its own request shape, reply shape and errors (APIS, below).
+//   text:   the user message (the prompt)
+//   resume: base64 PDF, sent before the text (only if you turned that on)
+//   plain:  the text alone, not in content blocks (the key Test)
+async function callAI(provider, apiKey, { system, text, resume = null, plain = false, maxTokens, timeoutMs = AI_TIMEOUT_MS }) {
   // A key can only hold plain characters. A curly quote or an invisible space
   // from copying would make the request fail before it is sent, and look
   // like "no internet".
   if (!/^[!-~]+$/.test(apiKey)) {
-    throw claudeError('Your key has a character that cannot be in a key (often a curly quote or an invisible space from copying). Copy it again from console.anthropic.com.', 'bad_key');
+    throw aiError(`Your key has a character that cannot be in a key (often a curly quote or an invisible space from copying). Copy it again from ${provider.keyPage}.`, 'bad_key');
   }
+  // Never send one company's key to another (an OpenAI key, with Gemini
+  // picked, would otherwise go to Google).
+  const owner = Providers.keyOwner(apiKey);
+  if (owner && owner !== provider.id) throw aiError(Providers.wrongKeyText(owner, provider.id), 'wrong_provider');
+  // Google and OpenAI need your OK in Chrome first (asked by the panel's
+  // Test and Save). Without it, the request would fail like "no internet".
+  if (provider.optional && !(await hasAccess(provider))) throw aiError(Providers.noAccessText(provider.id), 'permission');
+
+  const api = APIS[provider.id];
+  const { url, headers, body } = api.request(apiKey, { system, text, resume, plain, maxTokens });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const body = {
-    model:      ANTHROPIC_MODEL,
-    max_tokens: maxTokens,
-    messages:   [{ role: 'user', content }]
-  };
-  // A short note needs no long thinking, and thinking would use up
-  // max_tokens (3.1.0's 400-token messages could come back cut off).
-  if (ANTHROPIC_THINKING) body.thinking = ANTHROPIC_THINKING;
-  if (system) body.system = system;
-
   let res;
-  let text;
+  let raw;
   try {
-    res = await fetch(ANTHROPIC_URL, {
-      method:  'POST',
-      headers: {
-        'content-type':      'application/json',
-        'x-api-key':         apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body:   JSON.stringify(body),
-      signal: controller.signal
-    });
-    text = await res.text();
+    res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal });
+    raw = await res.text();
   } catch (err) {
     if (err && err.name === 'AbortError') {
-      throw claudeError(`Claude took too long (over ${Math.round(timeoutMs / 1000)}s). Please try again.`, 'timeout');
+      throw aiError(`${provider.writer} took too long (over ${Math.round(timeoutMs / 1000)}s). Please try again.`, 'timeout');
     }
-    throw claudeError('Could not reach Anthropic. Check your internet connection.', 'offline');
+    throw aiError(`Could not reach ${provider.company}. Check your internet connection.`, 'offline');
   } finally {
     clearTimeout(timer);
   }
 
   let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch (_) { data = null; }
+  try { data = raw ? JSON.parse(raw) : null; } catch (_) { data = null; }
   if (!res.ok) {
-    const [message, code] = friendlyClaudeError(res.status, data);
-    throw claudeError(message, code);
+    const [message, code] = api.error(res.status, data);
+    throw aiError(message, code);
   }
-  if (!data || typeof data !== 'object' || !Array.isArray(data.content)) {
-    throw claudeError('Anthropic sent an unexpected reply. Please try again.', 'bad_response');
+  if (!data || typeof data !== 'object') throw unexpectedReply(provider);
+  return api.read(data, provider);
+}
+
+// Is Chrome letting the extension reach this company's API? Anthropic's is
+// in the manifest's host_permissions (as in 3.1.0); Google's and OpenAI's
+// are optional, granted when you press Test or Save with them picked.
+async function hasAccess(provider) {
+  if (!provider.optional) return true;
+  try {
+    return await chrome.permissions.contains({ origins: [provider.origin] });
+  } catch (_) {
+    return false;
   }
-  if (data.stop_reason === 'refusal') {
-    throw claudeError('Claude declined to write this one. Try again, or remove your key in Settings to use Free Mode.', 'refusal');
+}
+
+// The same three answers from every company, in its own words.
+const unexpectedReply = (p) => aiError(`${p.company} sent an unexpected reply. Please try again.`, 'bad_response');
+const declined        = (p) => aiError(`${p.writer} declined to write this one. Try again, or remove your key in Settings to use Free Mode.`, 'refusal');
+const cutOff          = (p) => aiError(`${p.writer} stopped before it finished. Please try again.`, 'max_tokens');
+
+// ─── Anthropic (Claude): the Messages API ────────────────────────────────────
+// Called straight from the extension with the user's own key; the extra
+// header tells Anthropic that is intended.
+function anthropicRequest(apiKey, { system, text, resume, plain, maxTokens }) {
+  let content = text;
+  if (!plain) {
+    content = [];
+    if (resume) {
+      content.push({ type: 'document', title: 'My resume (the sender)', source: { type: 'base64', media_type: 'application/pdf', data: resume } });
+    }
+    content.push({ type: 'text', text });
   }
+  const body = {
+    model:      ANTHROPIC_MODEL,
+    max_tokens: maxTokens,
+    messages:   [{ role: 'user', content }]
+  };
+  if (ANTHROPIC_THINKING) body.thinking = ANTHROPIC_THINKING;
+  if (system) body.system = system;
+  return {
+    url: ANTHROPIC_URL,
+    headers: {
+      'content-type':      'application/json',
+      'x-api-key':         apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body
+  };
+}
+
+function anthropicRead(data, provider) {
+  if (!Array.isArray(data.content)) throw unexpectedReply(provider);
+  if (data.stop_reason === 'refusal') throw declined(provider);
   const out = data.content.filter(b => b && b.type === 'text').map(b => b.text).join('').trim();
-  if (!out && data.stop_reason === 'max_tokens') {
-    throw claudeError('Claude stopped before it finished. Please try again.', 'max_tokens');
-  }
+  if (!out && data.stop_reason === 'max_tokens') throw cutOff(provider);
   return out;
 }
 
 // [message, code]. Anthropic's own reason is passed on wherever "try again"
 // would not help (a billing problem, a spend limit, a refused request).
-function friendlyClaudeError(status, data) {
+function anthropicError(status, data) {
   const error  = (data && data.error) || {};
   const reason = typeof error.message === 'string' ? error.message : '';
   if (status === 401 && /^CORS requests are not allowed/i.test(reason)) {
@@ -646,7 +719,145 @@ function friendlyClaudeError(status, data) {
   return [`The request to Anthropic failed (error ${status}). Please try again.`, `http_${status}`];
 }
 
-function claudeError(message, code) {
+// ─── Google (Gemini): generateContent ────────────────────────────────────────
+// The key goes in a header, not in the URL (where it could end up in logs).
+function geminiRequest(apiKey, { system, text, resume, maxTokens }) {
+  const parts = [];
+  if (resume) parts.push({ inlineData: { mimeType: 'application/pdf', data: resume } });
+  parts.push({ text });
+  const body = {
+    contents: [{ role: 'user', parts }],
+    // No temperature: newer Gemini models ignore it or refuse it.
+    generationConfig: { maxOutputTokens: maxTokens, thinkingConfig: GEMINI_THINKING }
+  };
+  if (system) body.systemInstruction = { parts: [{ text: system }] };
+  return {
+    url: `${GEMINI_URL}/${GEMINI_MODEL}:generateContent`,
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+    body
+  };
+}
+
+// Gemini stops for safety or copyright reasons with these.
+const GEMINI_DECLINED = new Set(['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII']);
+
+function geminiRead(data, provider) {
+  const candidate = Array.isArray(data.candidates) ? data.candidates[0] : null;
+  if (!candidate) {
+    // The prompt itself was blocked: no answer at all.
+    if (data.promptFeedback && data.promptFeedback.blockReason) throw declined(provider);
+    throw unexpectedReply(provider);
+  }
+  const parts = candidate.content && Array.isArray(candidate.content.parts) ? candidate.content.parts : [];
+  // Thoughts (if any came back) are not the message.
+  const out = parts.filter(p => p && !p.thought && typeof p.text === 'string').map(p => p.text).join('').trim();
+  if (!out && candidate.finishReason === 'MAX_TOKENS') throw cutOff(provider);
+  if (!out && GEMINI_DECLINED.has(candidate.finishReason)) throw declined(provider);
+  return out;
+}
+
+// [message, code]. Google's errors have a gRPC status ("INVALID_ARGUMENT")
+// and sometimes a reason in `details` ("API_KEY_INVALID"). A bad key comes
+// back as a 400, not a 401, so it is checked first.
+function geminiError(status, data) {
+  const error  = (data && data.error) || {};
+  const reason = typeof error.message === 'string' ? error.message : '';
+  const kinds  = [error.status, typeof error.code === 'string' ? error.code : '',
+    ...(Array.isArray(error.details) ? error.details.map(d => d && d.reason) : [])].filter(k => typeof k === 'string').join(' ');
+  if (status === 401 || /\bAPI_KEY_/.test(kinds) || /\bauthentication\b/.test(kinds) || /API key (not valid|expired)/i.test(reason)) {
+    return ['Your Gemini API key was not accepted. Check it in Settings, or remove it to use Free Mode.', 'auth'];
+  }
+  if (/location is not supported|not available in your (country|region)|unsupported (country|location|region)/i.test(reason)) {
+    return [`Google said: ${reason} Remove your key to use Free Mode, or pick another AI provider.`, 'region'];
+  }
+  if (status === 402 || (status === 400 && /FAILED_PRECONDITION|failed_precondition/.test(kinds) && /billing/i.test(reason))) {
+    return [`Google could not bill your account${reason ? `: ${reason}` : '.'} Check billing at aistudio.google.com, or remove your key to use Free Mode.`, 'billing'];
+  }
+  if (status === 403) return [`Your Gemini key is not allowed to do this${reason ? `: ${reason}` : '.'}`, 'auth'];
+  if (status === 404) return [`Your Google account cannot use the model ${GEMINI_MODEL}. Remove your key to use Free Mode, or update the extension.`, 'model'];
+  if (status === 413) return ['The request was too large for Google (often a large resume PDF).', 'too_large'];
+  // Google's 429 covers both "too many per minute" and "daily free limit used
+  // up"; its own text is long and full of links, so it is not shown.
+  if (status === 429) return ["Too many requests to Gemini right now, or your key's daily limit is used up. Wait a minute, then try again.", 'rate_limit'];
+  if (status >= 500) return ['Gemini is busy right now. Please try again in a minute.', 'busy'];
+  if (status === 400 && reason) return [`Google said: ${reason}`, 'bad_request'];
+  if (status >= 400 && status < 500 && reason) return [`Google said: ${reason}`, `http_${status}`];
+  return [`The request to Google failed (error ${status}). Please try again.`, `http_${status}`];
+}
+
+// ─── OpenAI (GPT): Chat Completions ──────────────────────────────────────────
+function openaiRequest(apiKey, { system, text, resume, plain, maxTokens }) {
+  const messages = [];
+  // "developer" is what newer OpenAI models call the system prompt.
+  if (system) messages.push({ role: 'developer', content: system });
+  let content = text;
+  if (!plain) {
+    content = [];
+    if (resume) content.push({ type: 'file', file: { filename: 'my-resume.pdf', file_data: `data:application/pdf;base64,${resume}` } });
+    content.push({ type: 'text', text });
+  }
+  messages.push({ role: 'user', content });
+  return {
+    url: OPENAI_URL,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+    body: {
+      model: OPENAI_MODEL,
+      messages,
+      // The limit counts reasoning too, so reasoning is off.
+      max_completion_tokens: maxTokens,
+      reasoning_effort: OPENAI_REASONING
+    }
+  };
+}
+
+function openaiRead(data, provider) {
+  if (!Array.isArray(data.choices)) throw unexpectedReply(provider);
+  const choice  = data.choices[0] || {};
+  const message = choice.message || {};
+  if (message.refusal) throw declined(provider);
+  const out = typeof message.content === 'string' ? message.content.trim() : '';
+  if (!out && choice.finish_reason === 'length') throw cutOff(provider);
+  if (!out && choice.finish_reason === 'content_filter') throw declined(provider);
+  return out;
+}
+
+// OpenAI's codes for "no money left" and for a spend limit you (or OpenAI) set.
+const OPENAI_BILLING      = new Set(['insufficient_quota', 'credit_balance_exhausted', 'billing_hard_limit_reached', 'billing_not_active']);
+const OPENAI_SPEND_LIMITS = new Set(['organization_spend_limit_exceeded', 'project_spend_limit_exceeded', 'organization_usage_limit_exceeded']);
+
+// [message, code]. A 429 can be "too many requests" or "no credit left":
+// OpenAI's error code tells them apart.
+function openaiError(status, data) {
+  const error  = (data && data.error) || {};
+  const reason = typeof error.message === 'string' ? error.message : '';
+  const code   = typeof error.code === 'string' ? error.code : '';
+  if (status === 401) return ['Your OpenAI API key was not accepted. Check it in Settings, or remove it to use Free Mode.', 'auth'];
+  if (OPENAI_BILLING.has(code) || error.type === 'insufficient_quota') {
+    return [`OpenAI said: ${reason || 'your account has no credit left.'} Check Billing at platform.openai.com, or remove your key to use Free Mode.`, 'billing'];
+  }
+  if (OPENAI_SPEND_LIMITS.has(code)) return [`OpenAI said: ${reason || 'your spend limit is reached.'}`, 'spend_limit'];
+  if (code === 'unsupported_country_region_territory' || (status === 403 && /country|region|territory/i.test(reason))) {
+    return [`OpenAI said: ${reason || 'Country, region, or territory not supported.'} Remove your key to use Free Mode, or pick another AI provider.`, 'region'];
+  }
+  if (status === 403) return [`Your OpenAI key is not allowed to do this${reason ? `: ${reason}` : '.'}`, 'auth'];
+  if (status === 404 || code === 'model_not_found') {
+    return [`Your OpenAI account cannot use the model ${OPENAI_MODEL}. Remove your key to use Free Mode, or update the extension.`, 'model'];
+  }
+  if (status === 413) return ['The request was too large for OpenAI (often a large resume PDF).', 'too_large'];
+  if (status === 429) return ['Too many requests to OpenAI right now. Wait a minute, then try again.', 'rate_limit'];
+  if (status >= 500) return ['OpenAI is busy right now. Please try again in a minute.', 'busy'];
+  if (status === 400 && reason) return [`OpenAI said: ${reason}`, 'bad_request'];
+  if (status >= 400 && status < 500 && reason) return [`OpenAI said: ${reason}`, `http_${status}`];
+  return [`The request to OpenAI failed (error ${status}). Please try again.`, `http_${status}`];
+}
+
+const APIS = {
+  anthropic: { request: anthropicRequest, read: anthropicRead, error: anthropicError },
+  gemini:    { request: geminiRequest,    read: geminiRead,    error: geminiError },
+  openai:    { request: openaiRequest,    read: openaiRead,    error: openaiError }
+};
+
+function aiError(message, code) {
   const err = new Error(message);
   err.code = code;
   return err;
@@ -655,7 +866,7 @@ function claudeError(message, code) {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function getSettings() {
   return new Promise(resolve => {
-    chrome.storage.local.get(['userName', 'userBio', 'resumeBase64', 'resumeForAI', 'userApiKey'], resolve);
+    chrome.storage.local.get(['userName', 'userBio', 'resumeBase64', 'resumeForAI', 'aiProvider', ...Providers.KEY_FIELDS], resolve);
   });
 }
 

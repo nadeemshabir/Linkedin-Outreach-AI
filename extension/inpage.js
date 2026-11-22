@@ -270,7 +270,8 @@ if (!globalThis.__arkInpage) {
     function doneMessage(box, res) {
       const [text, tone] = fitMessage(box, res);
       // AI Mode could not read your resume PDF, so it wrote without it.
-      if (res.resumeSkipped) return [`Written without your resume: Anthropic could not read the PDF (replace or remove it in the extension's Settings). ${text}`, 'warn'];
+      // (aiCompany: whose AI wrote it, e.g. "Anthropic" or "Google".)
+      if (res.resumeSkipped) return [`Written without your resume: ${res.aiCompany || 'The AI'} could not read the PDF (replace or remove it in the extension's Settings). ${text}`, 'warn'];
       return [text, tone];
     }
 
