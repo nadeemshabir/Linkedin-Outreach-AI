@@ -1,8 +1,11 @@
 'use strict';
 
 // What you have in common with the person you are writing to.
-// A shared school, past employer or city is the strongest reason a stranger
-// replies, so these become talking points the writer can use.
+// A shared school or past employer is the strongest reason a stranger
+// replies, so these become talking points the writer can use. A shared city
+// is weak: on its own, "We are both based in Dublin" is not personal, and
+// with it picked every message to someone nearby was about the city. It is
+// still offered, for you to tick.
 // Uses your own profile, imported once from your LinkedIn page.
 
 const CommonGround = (() => {
@@ -59,7 +62,7 @@ const CommonGround = (() => {
     const mine = place(me.location);
     const theirs = place(them.location);
     if (mine.city && mine.city === theirs.city) {
-      add({ kind: 'city', strength: 2, label: `You are both in ${theirs.cityLabel}`, hook: `We are both based in ${theirs.cityLabel}` });
+      add({ kind: 'city', strength: 1, label: `You are both in ${theirs.cityLabel}`, hook: `We are both based in ${theirs.cityLabel}` });
     } else if (mine.country && mine.country === theirs.country) {
       add({ kind: 'country', strength: 1, label: `You are both in ${theirs.countryLabel}`, hook: `We are both based in ${theirs.countryLabel}` });
     }

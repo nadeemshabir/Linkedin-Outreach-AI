@@ -3655,6 +3655,7 @@ describe('Writer.prompt: what Claude is sent (AI Mode)', () => {
     + 'Write in plain, natural English, the way a polite person would write it themselves. '
     + 'Return only the message text: no subject line, no quotes around it, no notes or options. '
     + 'Never invent facts that are not in their profile, the talking points, or the sender\'s own details.';
+  const SPECIFIC = 'Show that I read their profile: mention one specific thing from it, such as a recent post, something in their About, their current role, a past job or where they studied. Where they live, or praise like "impressive profile", is not enough on its own.';
   const TAGS = ['profile', 'talking_points', 'common_ground'];
   // The lines that open or close a block.
   const tagLines = (user) => user.split('\n').filter((line) => /^<\/?(profile|talking_points|common_ground)>$/.test(line));
@@ -3706,7 +3707,8 @@ describe('Writer.prompt: what Claude is sent (AI Mode)', () => {
     expect(lines).toContain(`My goal: ${REFERRAL}`);
     expect(lines).toContain(`About me (the sender): name: ${ME}; bio: Data analyst finishing an MSc in Dublin.`);
     expect(lines).toContain('We have something in common (see <common_ground>). Mention one item naturally.');
-    expect(lines).toContain('Talking points from their profile are in <talking_points>. Use one if it helps.');
+    expect(lines).toContain('Talking points from their profile are in <talking_points>, the most specific first.');
+    expect(lines).toContain(SPECIFIC);
     expect(lines).toContain('End with one clear question that is easy to answer.');
     for (const tag of TAGS) expect(blockOf(user, tag)).not.toMatch(/Rahul|finishing an MSc|Referral for/);
   });
@@ -3732,6 +3734,20 @@ describe('Writer.prompt: what Claude is sent (AI Mode)', () => {
       expect(instructions).not.toMatch(/My goal|in common|Talking points|About me|resume/);
       expect(tagLines(user)).toEqual(['<profile>', '</profile>']);
       expect(user.split('\n').pop()).toBe(LAST);
+    }
+  });
+
+  it('asks for one specific thing from their profile (not their city), but only when there is one', () => {
+    // A full profile: posts, About, jobs. Seen live: without this line the AI
+    // often wrote about where they live.
+    expect(instructionsOf(Writer.prompt(brief()).user).split('\n')).toContain(SPECIFIC);
+    for (const one of [{ about: 'I build recommenders.' }, { recentPosts: ['Our ranking talk is online now'] }, { currentCompany: 'Spotify' }, { educationEntries: ['Trinity College Dublin'] }, { skills: ['SQL'] }]) {
+      expect(Writer.prompt(brief({ profile: { name: 'Aoife Murphy', ...one } })).user).toContain(SPECIFIC);
+    }
+    // Only a name, headline and city: nothing specific to point at, so the
+    // line would only push the AI to make something up.
+    for (const profile of [{ name: 'Aoife Murphy', headline: 'Data person', location: 'Dublin, Ireland' }, {}]) {
+      expect(Writer.prompt(brief({ profile })).user).not.toContain('Show that I read');
     }
   });
 

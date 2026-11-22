@@ -567,6 +567,10 @@ globalThis.Writer = globalThis.Writer || (() => {
     };
   }
 
+  // Something about them beyond their name, headline and city.
+  const hasDetail = (p = {}) => !!(clean(p.about) || clean(p.currentTitle) || clean(p.currentCompany)
+    || ['recentPosts', 'experienceEntries', 'educationEntries', 'skills'].some((k) => (p[k] || []).length));
+
   function prompt({ profile = {}, channel = 'note', maxChars, messageType = 'Networking', tone = 'Neutral', goal = '', commonGround = [], hooks: points = [], sender = {}, hasResume = false } = {}) {
     const isNote = channel === 'note';
     const limit = Number(maxChars) > 0 ? Number(maxChars) : (isNote ? 200 : 500);
@@ -591,7 +595,13 @@ globalThis.Writer = globalThis.Writer || (() => {
     if (me.length) lines.push(sentence(`About me (the sender): ${me.join('; ')}`));
     if (hasResume) lines.push('My resume is attached as a PDF. Use it only for what I can offer, and never present it as their experience.');
     if (commonGround.length) lines.push('We have something in common (see <common_ground>). Mention one item naturally.');
-    if (points.length) lines.push('Talking points from their profile are in <talking_points>. Use one if it helps.');
+    // Without this, the AI often reached for the easy fact (their city) even
+    // when it had their posts, About and jobs. Only asked when the profile
+    // has such a detail: with none, it would push the AI to make one up.
+    if (hasDetail(profile)) {
+      lines.push('Show that I read their profile: mention one specific thing from it, such as a recent post, something in their About, their current role, a past job or where they studied. Where they live, or praise like "impressive profile", is not enough on its own.');
+    }
+    if (points.length) lines.push('Talking points from their profile are in <talking_points>, the most specific first.');
     lines.push('End with one clear question that is easy to answer.');
     lines.push('');
     lines.push(`<profile>\n${tagged(profileForPrompt(profile))}\n</profile>`);

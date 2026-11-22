@@ -60,6 +60,16 @@ describe('common ground', () => {
     ]);
   });
 
+  it('a shared city is offered, but not picked by default: alone, it is not personal', () => {
+    const cityOnly = { ...them, educationEntries: [], pastCompanies: [], skills: [] };
+    expect(CommonGround.find(me, cityOnly)).toEqual([expect.objectContaining({ kind: 'city', label: 'You are both in Dublin' })]);
+    expect(CommonGround.defaultPick(CommonGround.find(me, cityOnly))).toEqual([]);
+    // Next to a shared school, it is not picked either.
+    expect(CommonGround.defaultPick(CommonGround.find(me, { ...cityOnly, educationEntries: them.educationEntries }))).toEqual([
+      'We both studied at Trinity College Dublin',
+    ]);
+  });
+
   it('works without an imported profile', () => {
     expect(CommonGround.find(null, them)).toEqual([]);
   });

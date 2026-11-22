@@ -294,8 +294,10 @@ describe('what the writer is given', () => {
     const w = world({ local: { myProfile: ME }, pages: { 1: AOIFE_FULL } });
     await w.start(QUICK);
     const job = await done(w);
-    expect(job.useCommonGround).toEqual(['We both studied at Trinity College Dublin', 'We are both based in Dublin']);
+    // A shared city is offered, but not picked: alone, it is not personal.
+    expect(job.useCommonGround).toEqual(['We both studied at Trinity College Dublin']);
     expect(job.message).toContain('we both studied at Trinity College Dublin');
+    expect(job.message).not.toMatch(/based in/);
     expect(w.fetch).not.toHaveBeenCalled();
   });
 
@@ -356,7 +358,8 @@ describe('what the writer is given', () => {
     expect(asked).toContain('End with one clear question');
     // What comes from LinkedIn is in its own blocks, after the instructions.
     expect(asked).toContain('We have something in common (see <common_ground>).');
-    expect(block(text, 'common_ground')).toEqual(['We both studied at Trinity College Dublin', 'We are both based in Dublin']);
+    expect(block(text, 'common_ground')).toEqual(['We both studied at Trinity College Dublin']);
+    expect(asked).toContain('Show that I read their profile: mention one specific thing from it');
     expect(block(text, 'talking_points')).toContain('Works as Data Scientist at Spotify');
     expect(asked).not.toMatch(/Trinity College|Spotify/);
   });
