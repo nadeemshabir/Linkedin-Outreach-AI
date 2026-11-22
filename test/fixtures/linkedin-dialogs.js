@@ -120,6 +120,18 @@ export function installLinkedInDialogs() {
       </form>
     </div>`);
 
+  // A first message (no earlier chat): titled "New message", the person is a
+  // tag in the "To" line. Pass labelled=false for a tag with no "Remove" label.
+  window.openNewMessageBox = (names, labelled = true) => show('document', `
+    <div role="dialog" aria-label="Messaging">
+      <header><h2>New message</h2><button type="button" data-action="dismiss">Close</button></header>
+      <div>${names.map(n => `<span><span>${esc(n)}</span><button type="button"${labelled ? ` aria-label="Remove ${esc(n)}"` : ''}>✕</button></span>`).join('')}</div>
+      <form>
+        <div><div role="textbox" contenteditable="true" aria-multiline="true" aria-label="Write a message…"><p><br></p></div></div>
+        <footer><div><button type="submit" data-send disabled>Send</button></div></footer>
+      </form>
+    </div>`);
+
   // A post editor: also a dialog with a rich text box, but not ours to touch.
   window.openPostBox = () => show('document', `
     <div role="dialog" aria-label="Create a post">

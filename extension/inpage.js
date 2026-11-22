@@ -153,7 +153,23 @@ if (!globalThis.__arkInpage) {
       if (!who) return null; // cannot tell here; the background reads the profile anyway
       if (ui.box.kind === 'message') {
         const h = ui.box.dialog.querySelector('h2');
-        const chatWith = clean(h && h.textContent);
+        let chatWith = clean(h && h.textContent);
+        // A first message opens a "New message" box: the title is not a
+        // name, and the person is a tag in the "To" line ("Ayaan Saifi ✕").
+        if (/^new message$/i.test(chatWith)) {
+          const tags = [...new Set([...ui.box.dialog.querySelectorAll('[aria-label]')]
+            .map(el => clean(el.getAttribute('aria-label')).match(/^remove\s+(.+?)(?:\s+from\b.*)?$/i))
+            .filter(Boolean).map(m => m[1]).filter(n => !/attachment|image|file|gif/i.test(n)))];
+          if (tags.length > 1) return 'This message is to more than one person. Ark writes to one person at a time.';
+          if (tags.length === 1) chatWith = tags[0];
+          else {
+            // No labelled tag: their name must at least be in the box.
+            const seen = [...ui.box.dialog.querySelectorAll('span, a, div, p, h3')]
+              .some(el => el.children.length === 0 && samePerson(clean(el.textContent), who));
+            if (seen) return null;
+            return 'Add the person in the "To" line first, then click again.';
+          }
+        }
         return chatWith && !samePerson(chatWith, who)
           ? `This chat is with ${chatWith}. Open their profile to write to them with Ark.`
           : null;

@@ -35,6 +35,15 @@ describe('message strength check', () => {
     expect(byId(r).personal).toMatchObject({ ok: false, label: 'Nothing specific about Aoife yet' });
   });
 
+  it('mentioning one of their posts counts as specific', () => {
+    const withPost = { ...ctx, them: { ...them, recentPosts: ['We shipped an app that helps elderly patients track medicines, built for practical usability.'] } };
+    const r = Strength.check('Hi Aoife, I saw your post about practical usability for elderly patients. Could we chat?', withPost);
+    expect(byId(r).personal.ok).toBe(true);
+    // Sharing only everyday words with a post is not enough.
+    const r2 = Strength.check('Hi Aoife, I am currently looking for software roles. Could we chat?', withPost);
+    expect(byId(r2).personal.ok).toBe(false);
+  });
+
   it('no question = no clear ask', () => {
     const r = Strength.check('Hi Aoife, I loved your work at Spotify.', ctx);
     expect(byId(r).ask.ok).toBe(false);

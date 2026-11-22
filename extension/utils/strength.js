@@ -85,7 +85,18 @@ const Strength = (() => {
     ].map(t => lc(String(t || '').trim())).filter(t => t.length >= 3);
     const firstName = lc(String(them.name || '').split(/\s+/)[0]);
     const body = lc(text);
-    return terms.some(t => t !== firstName && body.includes(t));
+    if (terms.some(t => t !== firstName && body.includes(t))) return true;
+    // Their posts and About: two uncommon words shared with the draft
+    // ("…your post about software for elderly patients").
+    const theirs = new Set(longWords([them.about, ...(them.recentPosts || [])].join(' ')));
+    return longWords(text).filter(w => theirs.has(w)).length >= 2;
+  }
+
+  const COMMON = new Set(('really currently recently looking interested working software engineer engineering ' +
+    'experience company student opportunity opportunities career learning connect connecting thanks would ' +
+    'please people through started building developer development roles position team teams hiring').split(' '));
+  function longWords(s) {
+    return [...new Set(lc(s).match(/\p{L}{6,}/gu) || [])].filter(w => !COMMON.has(w));
   }
 
   /**

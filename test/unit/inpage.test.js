@@ -424,6 +424,35 @@ describe('Write with Ark, inside LinkedIn (the page)', () => {
     expect(page.sendMessage).not.toHaveBeenCalled();
   });
 
+  it('a "New message" box (first message) for the person on the profile: the button works', async () => {
+    const page = linkedin({ person: SEAN });
+    page.win.openNewMessageBox([SEAN.name]);
+    const bar = await until(() => page.bar());
+    expect(bar.write.disabled).toBe(false);
+    expect(bar.info.textContent).toBe('');
+  });
+
+  it('a "New message" box with a tag that has no label: works if their name is there', async () => {
+    const page = linkedin({ person: SEAN });
+    page.win.openNewMessageBox([SEAN.name], false);
+    const bar = await until(() => page.bar());
+    expect(bar.write.disabled).toBe(false);
+  });
+
+  it('a "New message" box for someone else, or for two people: says so', async () => {
+    const page = linkedin({ person: SEAN });
+    page.win.openNewMessageBox(['Liam Byrne']);
+    let bar = await until(() => page.bar());
+    expect(bar.write.disabled).toBe(true);
+    expect(bar.info.textContent).toBe('This chat is with Liam Byrne. Open their profile to write to them with Ark.');
+
+    const page2 = linkedin({ person: SEAN });
+    page2.win.openNewMessageBox([SEAN.name, 'Liam Byrne']);
+    bar = await until(() => page2.bar());
+    expect(bar.write.disabled).toBe(true);
+    expect(bar.info.textContent).toBe('This message is to more than one person. Ark writes to one person at a time.');
+  });
+
   it('an invite to someone in "People you may know": says so, and writes nothing', async () => {
     const page = linkedin({ extra: '<aside><button aria-label="Invite Kim Lee to connect"><span>Connect</span></button></aside>' });
     const bar = await openNoteViaConnect(page, 'Kim Lee');
