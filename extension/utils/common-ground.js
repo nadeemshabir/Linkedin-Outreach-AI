@@ -11,7 +11,7 @@
 const CommonGround = (() => {
   const COMPANY_NOISE = /\b(?:inc|ltd|limited|llc|llp|plc|gmbh|ag|bv|pvt|private|corp|corporation|co|company|group|holdings)\b\.?/gi;
   // Places and institutions that show someone studied or worked in India.
-  // (Most of Ark's students are from India, judging by the original code.)
+  // (Most users are students from India, judging by the original code.)
   const INDIA = /\b(?:india|iit|iits|nit|iiit|iim|bits pilani|delhi|mumbai|bombay|bengaluru|bangalore|chennai|madras|hyderabad|pune|kolkata|calcutta|ahmedabad|jaipur|lucknow|kanpur|kharagpur|roorkee|guwahati|vit|manipal|amity|anna university|jadavpur|srm|kiit)\b/i;
 
   const lc = (s) => String(s || '').toLowerCase();

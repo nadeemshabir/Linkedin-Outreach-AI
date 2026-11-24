@@ -1,7 +1,7 @@
 'use strict';
 
 // background.js — the extension's engine.
-// Since Ark's 3.1.0 there is no Ark server and no license key. The message is
+// Since 3.1.0 there is no server and no license key. The message is
 // written in one of two ways:
 //   Free Mode (no key): from a template, on this device (utils/writer.js)
 //   AI Mode: by the AI company the user picked in Settings (Anthropic,
@@ -22,7 +22,7 @@ importScripts('utils/profile-url.js', 'utils/limits.js', 'utils/common-ground.js
 // none, and thinking counts against the output limit, so a note could come
 // back cut off (3.1.0's 400-token messages could).
 //
-// Anthropic. Ark's 3.1.0 chose Claude Haiku 5.5. To change the model, change
+// Anthropic. Version 3.1.0 chose Claude Haiku 5.5. To change the model, change
 // the thinking setting with it:
 //   Haiku 5.5:  { type: 'disabled' }
 //   Sonnet 5.5: { type: 'between_tools' }
@@ -83,7 +83,7 @@ chrome.runtime.onInstalled.addListener(() => {
   forgetLicenseKey();
 });
 
-// Keys from before 3.1.0 (Ark's license key and its server status) are of no
+// Keys from before 3.1.0 (the old license key and its server status) are of no
 // use any more. AI Mode uses the user's own key (see utils/providers.js).
 async function forgetLicenseKey() {
   try {
@@ -131,7 +131,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // From the "Write with Ark" button inside LinkedIn's own note/message box.
+  // From the "✨ Write" button inside LinkedIn's own note/message box.
   // It may only write for the tab it is in.
   if (message.type === 'INPAGE_WRITE') {
     inpageWrite({ ...(message.payload || {}), tabId: sender && sender.tab ? sender.tab.id : null }).then(sendResponse);
@@ -186,7 +186,7 @@ async function whileRunning(profileKey) {
   while (running.has(profileKey)) await (runs.get(profileKey) || delay(50));
 }
 
-// ─── "Write with Ark" inside LinkedIn's own boxes ────────────────────────────
+// ─── "✨ Write" inside LinkedIn's own boxes ───────────────────────────────────
 // The button in LinkedIn's note / message box (inpage.js) asks for a draft
 // here. It shares the side panel's job, so both always show the same draft:
 //   - a finished draft for this person and this kind of box: handed over at
@@ -304,7 +304,7 @@ async function runJob(job) {
       ? job.useCommonGround.filter(h => hooks.includes(h))
       : CommonGround.defaultPick(job.commonGround);
 
-    // Talking points from the profile. Deep Mode shows them first (as Ark's
+    // Talking points from the profile. Deep Mode shows them first (as
     // 3.1.0 does); both modes give them to the writer.
     if (job.mode === 'deep' && !job.enrichmentJSON) {
       await setStep(job, 'enriching');

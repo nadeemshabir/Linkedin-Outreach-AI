@@ -76,11 +76,11 @@ describe('starting up', () => {
     expect(fetch).not.toHaveBeenCalled(); // no server, and no key check at start-up
   });
 
-  it('after an update, forgets the old Ark license key and its status', async () => {
+  it('after an update, forgets the old license key and its status', async () => {
     const { chrome } = createFakeChrome({
       local: {
-        licenseKey: 'ARK-TEST-0000-0000',
-        keyStatus: { key: 'ARK-TEST-0000-0000', state: 'valid', remaining: 9, checkedAt: 1 },
+        licenseKey: 'OLD-TEST-0000-0000',
+        keyStatus: { key: 'OLD-TEST-0000-0000', state: 'valid', remaining: 9, checkedAt: 1 },
         userName: 'Priya Sharma',
       },
     });
@@ -93,7 +93,7 @@ describe('starting up', () => {
 
   it('keeps your own Anthropic key, and what is known about it', async () => {
     const keyStatus = { state: 'invalid', keyTail: API_KEY.slice(-8), reason: 'Your Anthropic API key was not accepted.', code: 'auth', checkedAt: 1 };
-    const { chrome } = createFakeChrome({ local: { licenseKey: 'ARK-TEST-0000-0000', userApiKey: API_KEY, keyStatus } });
+    const { chrome } = createFakeChrome({ local: { licenseKey: 'OLD-TEST-0000-0000', userApiKey: API_KEY, keyStatus } });
     boot(chrome);
     updated(chrome);
     await until(() => !('licenseKey' in chrome.storage.local.data));
@@ -110,7 +110,7 @@ describe('starting up', () => {
 
     await w.start(QUICK); // Generate in the side panel
     await done(w);
-    await w.inpage({ channel: 'message' }); // "Write with Ark" in LinkedIn's message box
+    await w.inpage({ channel: 'message' }); // "✨ Write" in LinkedIn's message box
 
     expect(w.calls).toHaveLength(2);
     for (const call of w.calls) {
@@ -243,7 +243,7 @@ describe('messages from LinkedIn pages (content scripts) are not trusted', () =>
 });
 
 // The scripts the extension runs in LinkedIn's pages: the page reader, the
-// part that answers the background, the writer, and the "Write with Ark"
+// part that answers the background, the writer, and the "✨ Write"
 // button. The button uses the writer (for the first name on its label), so
 // the writer must come before it.
 describe('the scripts that run in LinkedIn pages', () => {

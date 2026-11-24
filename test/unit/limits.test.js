@@ -1,6 +1,6 @@
 // Tests for extension/utils/limits.js: LinkedIn's limits, and Fit
 // (fitToLimit), which makes a draft fit by dropping whole sentences. The
-// panel's "Fit" button and the in-page "Write with Ark" button use it.
+// panel's "Fit" button and the in-page "✨ Write" button use it.
 // The rules are the ones in the fix notes of the second and third reviews
 // ("Fit"). Where the third changed a rule, its notes win.
 // Every person here is made up.
@@ -323,7 +323,7 @@ describe('fitToLimit: the greeting', () => {
   // Dr. Rao," it was "Dear Dr", and "Rao, I read your paper…" became a
   // middle sentence, which Fit dropped first: "Dear Dr. I am an MSc
   // student…". Free Mode never writes a title, but Claude does (AI Mode,
-  // often Formal), and "Write with Ark" fits every note that is too long.
+  // often Formal), and the "✨ Write" button fits every note that is too long.
   it('"Dear Dr. Rao," is kept whole: the example in the third review', () => {
     const NOTE = 'Dear Dr. Rao, I read your paper on graph neural networks for fraud detection and found it fascinating. '
       + 'I am an MSc student at UCD working on a similar problem. Would you be open to a short chat about your research?';

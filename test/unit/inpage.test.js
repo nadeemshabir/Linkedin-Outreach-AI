@@ -1,11 +1,11 @@
-// "Write with Ark" inside LinkedIn's own boxes (inpage.js), on a page that
+// The "✨ Write" button inside LinkedIn's own boxes (inpage.js), on a page that
 // copies LinkedIn's structure. Each test gets its own window, with the real
 // content scripts loaded the way the manifest lists them: scraper.js,
 // content_script.js, utils/writer.js (the button's label uses its
 // firstName), then inpage.js. The background is a stub that answers
 // INPAGE_WRITE (its own tests: inpage-write.test.js).
 //
-// Real clicks only: Ark's Write and Undo buttons act only on a click the
+// Real clicks only: the Write and Undo buttons act only on a click the
 // browser marks as real (event.isTrusted). A script in LinkedIn's page could
 // call .click() on them, and in AI Mode each write is a paid request on your
 // key. happy-dom has no real mouse: its .click() is never trusted, like a
@@ -75,7 +75,7 @@ function realClick(el) {
 
 /**
  * A LinkedIn profile page with LinkedIn's boxes, and (unless `scripts` is
- * false) Ark's content scripts in it, talking to a stub background that
+ * false) the extension's content scripts in it, talking to a stub background that
  * answers `reply`. With `scripts: false`, a test loads the copies itself
  * (loadCopy below).
  */
@@ -99,7 +99,7 @@ function linkedin({ person = AOIFE, url, extra = '', reply = { ok: true, message
   const doc = win.document;
   const shadow = () => doc.getElementById('interop-outlet')?.shadowRoot;
   /** Every bar of ours on the page, in the page or in LinkedIn's shadow root. */
-  const hosts = () => [...doc.querySelectorAll('[data-ark-write]'), ...(shadow()?.querySelectorAll('[data-ark-write]') || [])];
+  const hosts = () => [...doc.querySelectorAll('[data-outreach-write]'), ...(shadow()?.querySelectorAll('[data-outreach-write]') || [])];
   return {
     win,
     doc,
@@ -147,7 +147,7 @@ function trackListeners(doc) {
 }
 
 /**
- * Loads one copy of Ark's content scripts into the page the way Chrome does:
+ * Loads one copy of the extension's content scripts into the page the way Chrome does:
  * in the extension's own world. A world shares the page's DOM, but has its
  * own global scope (its own globalThis, `chrome` and timers), so a copy in a
  * new world does not see the first copy's "already loaded" marks. After an
@@ -190,7 +190,7 @@ function loadCopy(page, { reply = page.reply } = {}) {
     listening: () => mine.filter((l) => page.listeners.includes(l)).map((l) => l.type).sort(),
     /** How many timers this copy has set so far (it looks at the page from a timer). */
     timers: () => timers,
-    /** Ark is updated while the page stays open: Chrome cuts this copy off. */
+    /** The extension is updated while the page stays open: Chrome cuts this copy off. */
     update() {
       delete chrome.runtime.id;
       sendMessage.mockRejectedValue(new Error('Extension context invalidated.'));
@@ -207,7 +207,7 @@ function loadCopy(page, { reply = page.reply } = {}) {
 function countBarChanges(page) {
   let now = page.hosts().length;
   const seen = { added: 0, removed: 0, most: now };
-  const isBar = (n) => n.nodeType === 1 && n.hasAttribute('data-ark-write');
+  const isBar = (n) => n.nodeType === 1 && n.hasAttribute('data-outreach-write');
   const observer = new page.win.MutationObserver((records) => {
     for (const r of records) {
       const added = [...r.addedNodes].filter(isBar).length;
@@ -232,7 +232,7 @@ async function openNoteViaConnect(page, name = 'Aoife Murphy') {
   return until(() => page.bar());
 }
 
-describe('Write with Ark, inside LinkedIn (the page)', () => {
+describe('The Write button, inside LinkedIn (the page)', () => {
   it('Connect → Add a note: a "Write a note to Aoife" button appears between the text box and Send', async () => {
     const page = linkedin();
     page.click('button[aria-label="Invite Aoife Murphy to connect"]');
@@ -418,7 +418,7 @@ describe('Write with Ark, inside LinkedIn (the page)', () => {
     page.win.openMessageBox('Liam Byrne');
     const bar = await until(() => page.bar());
     expect(bar.write.disabled).toBe(true);
-    expect(bar.info.textContent).toBe('This chat is with Liam Byrne. Open their profile to write to them with Ark.');
+    expect(bar.info.textContent).toBe('This chat is with Liam Byrne. Open their profile to write to them.');
     realClick(bar.write); // even your real click does nothing here
     await settle();
     expect(page.sendMessage).not.toHaveBeenCalled();
@@ -444,20 +444,20 @@ describe('Write with Ark, inside LinkedIn (the page)', () => {
     page.win.openNewMessageBox(['Liam Byrne']);
     let bar = await until(() => page.bar());
     expect(bar.write.disabled).toBe(true);
-    expect(bar.info.textContent).toBe('This chat is with Liam Byrne. Open their profile to write to them with Ark.');
+    expect(bar.info.textContent).toBe('This chat is with Liam Byrne. Open their profile to write to them.');
 
     const page2 = linkedin({ person: SEAN });
     page2.win.openNewMessageBox([SEAN.name, 'Liam Byrne']);
     bar = await until(() => page2.bar());
     expect(bar.write.disabled).toBe(true);
-    expect(bar.info.textContent).toBe('This message is to more than one person. Ark writes to one person at a time.');
+    expect(bar.info.textContent).toBe('This message is to more than one person. This button writes to one person at a time.');
   });
 
   it('an invite to someone in "People you may know": says so, and writes nothing', async () => {
     const page = linkedin({ extra: '<aside><button aria-label="Invite Kim Lee to connect"><span>Connect</span></button></aside>' });
     const bar = await openNoteViaConnect(page, 'Kim Lee');
     expect(bar.write.disabled).toBe(true);
-    expect(bar.info.textContent).toBe('This invite is for Kim Lee. Open their profile to write the note with Ark.');
+    expect(bar.info.textContent).toBe('This invite is for Kim Lee. Open their profile to write the note.');
   });
 
   it("works when the note box is inside LinkedIn's shadow root too", async () => {
@@ -480,7 +480,7 @@ describe('Write with Ark, inside LinkedIn (the page)', () => {
     expect(feed.bar()).toBeNull();
   });
 
-  it('errors show in the bar; an outdated copy of Ark asks you to reload', async () => {
+  it('errors show in the bar; an outdated copy of the extension asks you to reload', async () => {
     const refused = "Your Anthropic API key was not accepted. Check it in the extension's Settings (click its icon in Chrome's toolbar), or remove it to use Free Mode.";
     const page = linkedin({ reply: { ok: false, error: refused, code: 'auth' } });
     const bar = await openNoteViaConnect(page);
@@ -492,12 +492,12 @@ describe('Write with Ark, inside LinkedIn (the page)', () => {
 
     page.sendMessage.mockRejectedValue(new Error('Extension context invalidated.'));
     realClick(bar.write);
-    await until(() => bar.info.textContent.startsWith('Ark was updated'));
-    expect(bar.info.textContent).toBe('Ark was updated. Reload this page to use it here.');
+    await until(() => bar.info.textContent.startsWith('The extension was updated'));
+    expect(bar.info.textContent).toBe('The extension was updated. Reload this page to use it here.');
   });
 });
 
-describe("Write with Ark: the button uses the note's name for the person", () => {
+describe("The Write button uses the note's name for the person", () => {
   // The label uses the writer's own rule (Writer.firstName, from
   // utils/writer.js): no title and no initials. So the button and the note
   // ("Hi Ananya,") name the person the same way.
@@ -530,17 +530,17 @@ describe("Write with Ark: the button uses the note's name for the person", () =>
     expect(bar.info.textContent).toBe('');
   });
 
-  it('a name with nothing left after the title ("Dr."): the button says "✨ Write with Ark", and it still writes', async () => {
+  it('a name with nothing left after the title ("Dr."): the button says "✨ Write a note", and it still writes', async () => {
     const message = 'Hello, your work at Spotify caught my eye. Would you be open to connecting?';
     const page = linkedin({ person: named(AOIFE, 'Dr.'), reply: { ok: true, message, limit: 200, fit: { changed: false, fits: true, removed: 0 } } });
     const bar = await openNoteViaConnect(page, 'Dr.');
-    expect(bar.write.textContent).toBe('✨ Write with Ark');
+    expect(bar.write.textContent).toBe('✨ Write a note');
     expect(bar.write.disabled).toBe(false);
 
     realClick(bar.write);
     await until(() => page.note().value === message);
     expect(page.sendMessage).toHaveBeenCalledWith({ type: 'INPAGE_WRITE', payload: { channel: 'note', maxChars: 200 } });
-    expect(bar.write.textContent).toBe('✨ Write with Ark');
+    expect(bar.write.textContent).toBe('✨ Write a note');
     expect(bar.info.textContent).toBe(`${message.length}/200. Read it, then press Send.`);
   });
 
@@ -557,11 +557,11 @@ describe("Write with Ark: the button uses the note's name for the person", () =>
 
     const bar = await openNoteViaConnect(page);
     expect(bar.write.textContent).toBe('✨ Write a note to Aoife');
-    page.note().focus(); // makes Ark look at the page again
+    page.note().focus(); // makes the extension look at the page again
     // Time for a second copy of inpage.js, if one ran, to put in its own bar
     // (or swap ours for it).
     await new Promise((r) => setTimeout(r, 600));
-    expect(page.doc.querySelectorAll('[data-ark-write]')).toHaveLength(1);
+    expect(page.doc.querySelectorAll('[data-outreach-write]')).toHaveLength(1);
     expect(page.bar().host).toBe(bar.host); // still the same bar
 
     realClick(bar.write);
@@ -570,7 +570,7 @@ describe("Write with Ark: the button uses the note's name for the person", () =>
   });
 });
 
-describe('After Ark is updated while LinkedIn stays open', () => {
+describe('After the extension is updated while LinkedIn stays open', () => {
   // Chrome keeps the old copy of the content scripts running in the page,
   // but cuts it off: chrome.runtime.id is gone, and its messages to the
   // background fail. The background later starts a new copy in a fresh world
@@ -605,7 +605,7 @@ describe('After Ark is updated while LinkedIn stays open', () => {
     page.click(`button[aria-label="Message ${SEAN.name}"]`);
     await until(() => page.editor());
     page.editor().focus();
-    await wait(600); // three times the 200ms Ark waits before it looks
+    await wait(600); // three times the 200ms the extension waits before it looks
     expect(page.hosts()).toEqual([]); // no bar from the old copy
     expect(old.timers()).toBe(timers); // and it did not even plan a look
     expect(old.sendMessage).not.toHaveBeenCalled();
@@ -642,7 +642,7 @@ describe('After Ark is updated while LinkedIn stays open', () => {
     expect(old.watching()).toBe(0); // the old copy stepped aside
     expect(old.listening()).toEqual([]);
 
-    // Your click writes, through the new copy (the old one cannot reach Ark).
+    // Your click writes, through the new copy (the old one cannot reach the extension).
     realClick(bar.write);
     await until(() => page.note().value === NOTE);
     expect(fresh.sendMessage).toHaveBeenCalledTimes(1);

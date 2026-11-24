@@ -1,5 +1,5 @@
 // What the extension may reach. Its host access is LinkedIn, plus Anthropic's
-// API for AI Mode (the same as Ark's 3.1.0, so no new install warning).
+// API for AI Mode (the same as 3.1.0, so no new install warning).
 // Google's and OpenAI's APIs are optional: Chrome asks only when you pick that
 // company in Settings, so none is granted at install. It
 // also proves the extension still works without the "tabs" permission (B10):

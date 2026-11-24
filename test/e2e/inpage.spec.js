@@ -1,12 +1,12 @@
-// "Write with Ark" in real Chromium: the real extension (background and
+// The "✨ Write" button in real Chromium: the real extension (background and
 // content scripts) on a LinkedIn-like page with LinkedIn's note box and
 // message box. Free Mode by default: no key, the text comes from the
 // extension's own template, and nothing is fetched. Three tests use AI Mode,
 // with a fake of Anthropic's Messages API. Checks that the page itself sees
 // the text the way it sees typing (its counter, its Send button), that the
 // text fits, that nothing is ever sent, and that only your real click or
-// key press (not a script in LinkedIn's page) can make Ark write. The last
-// test turns Ark off and on again while the page stays open, as an update
+// key press (not a script in LinkedIn's page) can make it write. The last
+// test turns the extension off and on again while the page stays open, as an update
 // does, and checks that exactly one bar stays and still works.
 import { test, expect, fakeClaude, promptText, API_KEY } from './extension.js';
 import { openSidePanel } from './side-panel.js';
@@ -58,14 +58,14 @@ function jobFor(serviceWorker, person) {
 }
 
 /**
- * A script in LinkedIn's own page (not the extension) finds one of Ark's
+ * A script in LinkedIn's own page (not the extension) finds one of the extension's
  * buttons through the bar's open shadow root and calls .click() on it.
- * Returns the button's text and the note box right after the click: Ark
+ * Returns the button's text and the note box right after the click: the extension
  * changes them at once when it acts on a click.
  */
 function scriptClick(page, button) {
   return page.evaluate((cls) => {
-    const el = document.querySelector('[data-ark-write]').shadowRoot.querySelector(`button.${cls}`);
+    const el = document.querySelector('[data-outreach-write]').shadowRoot.querySelector(`button.${cls}`);
     el.click();
     return { button: el.textContent, box: document.querySelector('textarea').value };
   }, button);
@@ -233,7 +233,7 @@ test("Free Mode: Enter on the focused button counts as your click too, and the k
   await expect(page.locator('textarea')).toHaveValue(/^Hi Aoife, /);
   expect(await jobFor(serviceWorker, AOIFE)).toMatchObject({ writer: 'free', channel: 'note' });
 
-  expect(await page.evaluate(() => window.__keys)).toEqual([]); // Ark kept the Enter to itself
+  expect(await page.evaluate(() => window.__keys)).toEqual([]); // the bar kept the Enter to itself
   expect(await page.evaluate(() => window.__sends)).toEqual([]);
   expect(blocked).toEqual([]);
 });
@@ -270,14 +270,14 @@ test('a chat with someone else on this profile: the button says so and nothing i
 
   const write = page.getByRole('button', { name: '✨ Write a message to Aoife' });
   await expect(write).toBeDisabled();
-  await expect(page.getByRole('status')).toHaveText('This chat is with Liam Byrne. Open their profile to write to them with Ark.');
+  await expect(page.getByRole('status')).toHaveText('This chat is with Liam Byrne. Open their profile to write to them.');
   await expect(page.getByRole('textbox', { name: 'Write a message…' })).toHaveText('');
   expect(await jobFor(serviceWorker, AOIFE)).toBeNull(); // nothing was started
   expect(blocked).toEqual([]);
 });
 
 /**
- * Turns Ark off and on again in chrome://extensions. Chrome unloads the
+ * Turns the extension off and on again in chrome://extensions. Chrome unloads the
  * extension and loads it again, as it does for an update, and leaves open
  * tabs as they are: the old copy of the content scripts keeps running in
  * them, cut off from the extension. Returns the new service worker.
@@ -295,14 +295,14 @@ async function turnOffAndOn(context, extensionId) {
 }
 
 /**
- * From now on, counts Ark's bars put into the page and taken out of it, seen
+ * From now on, counts the extension's bars put into the page and taken out of it, seen
  * from LinkedIn's own page, one change at a time. `most` is the most bars on
  * the page at the same moment.
  */
 function countBarChanges(page) {
   return page.evaluate(() => {
-    const isBar = (n) => n.nodeType === 1 && n.hasAttribute('data-ark-write');
-    let now = document.querySelectorAll('[data-ark-write]').length;
+    const isBar = (n) => n.nodeType === 1 && n.hasAttribute('data-outreach-write');
+    let now = document.querySelectorAll('[data-outreach-write]').length;
     window.__barChanges = { added: 0, removed: 0, most: now };
     new MutationObserver((records) => {
       for (const r of records) {
@@ -317,13 +317,13 @@ function countBarChanges(page) {
   });
 }
 
-test('Ark is updated while a note box is open (here: turned off and on again): the old copy steps aside, and the side panel brings exactly one bar that stays and writes', async ({ context, extensionId, blocked }) => {
+test('The extension is updated while a note box is open (here: turned off and on again): the old copy steps aside, and the side panel brings exactly one bar that stays and writes', async ({ context, extensionId, blocked }) => {
   const page = await openLinkedIn(context, AOIFE);
   await page.getByRole('button', { name: 'Invite Aoife Murphy to connect' }).click();
   await page.getByRole('button', { name: 'Add a note', exact: true }).click();
   const write = page.getByRole('button', { name: '✨ Write a note to Aoife' });
   await expect(write).toBeEnabled();
-  const bars = page.locator('[data-ark-write]');
+  const bars = page.locator('[data-outreach-write]');
   await expect(bars).toHaveCount(1);
 
   // The update. The page stays open, and so does the note box.

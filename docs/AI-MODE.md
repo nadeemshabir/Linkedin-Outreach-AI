@@ -1,6 +1,6 @@
 # How messages are written (Free Mode and AI Mode)
 
-Since Ark's 3.1.0 there is no Ark server and no license key. v4 keeps that: everything runs inside the extension.
+Since 3.1.0 there is no server and no license key. v4 keeps that: everything runs inside the extension.
 
 | | Free Mode | AI Mode |
 |---|---|---|
@@ -78,11 +78,11 @@ Each call is a plain `fetch` to the address in the table above. For Anthropic it
 
 **Cost, roughly:** Claude Haiku 5.5 costs $0.10 per million input tokens and $0.50 per million output tokens. One message is about 1,000 to 2,000 input tokens (a few thousand more with a resume) and about 100 output tokens: around $0.0002 to $0.001. OpenAI's `gpt-6-luna` has the same list price ($0.10 in, $0.50 out per million tokens). For `gemini-3.5-flash-lite`, Google's small low-cost model, see Google's pricing page.
 
-**Each company's model is set in one place** in `background.js`: `ANTHROPIC_MODEL`, `GEMINI_MODEL` and `OPENAI_MODEL`, each with its thinking setting next to it (another model may need another setting, as the comments there say). The list of companies (names, key fields, addresses) is in [`extension/utils/providers.js`](../extension/utils/providers.js). Haiku 5.5 is Ark's choice in 3.1.0: fast and very cheap for a student paying with their own key. A larger model would write better messages, at many times the cost.
+**Each company's model is set in one place** in `background.js`: `ANTHROPIC_MODEL`, `GEMINI_MODEL` and `OPENAI_MODEL`, each with its thinking setting next to it (another model may need another setting, as the comments there say). The list of companies (names, key fields, addresses) is in [`extension/utils/providers.js`](../extension/utils/providers.js). Haiku 5.5 is the model 3.1.0 chose: fast and very cheap for a student paying with their own key. A larger model would write better messages, at many times the cost.
 
-## If Ark brings a server back later
+## If a server is added later
 
-Asking every student for their own API key is the weakest part of 3.1.0's design: most students do not have one. A small server could hold Ark's key instead (students never see it), set a daily limit per user, and keep everything above. Ideas from the old server that would still matter then:
+Asking every student for their own API key is the weakest part of 3.1.0's design: most students do not have one. A small server could hold one shared key instead (students never see it), set a daily limit per user, and keep everything above. Ideas from the old server that would still matter then:
 
 1. **Send the resume once** and keep a short summary, instead of sending the PDF with every message.
 2. **Stream the message** so it appears as it is written.
