@@ -136,7 +136,7 @@ const Tracker = (() => {
     const first = String(c.name || 'They').split(/\s+/)[0];
     const days  = (t) => (t ? (now - t) / DAY : 0);
     // `goal` tells the writer what this next message is for. The panel and
-    // the in-page "Write with Ark" button both use it.
+    // the in-page "✨ Write" button both use it.
     if (c.status === 'connected') {
       return {
         due: true, kind: 'message', label: `${first} accepted your invite. Now send your message.`,

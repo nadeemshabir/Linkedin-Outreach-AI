@@ -1,6 +1,6 @@
 'use strict';
 
-// writer.js — writes the message. Two ways, as in Ark's 3.1.0:
+// writer.js — writes the message. Two ways, as in 3.1.0:
 //   Free Mode (no key): a template, on this device, for free.
 //   AI Mode (your own Anthropic key): the prompt Claude gets.
 // Both get the same facts: the profile, where the message goes (a connection

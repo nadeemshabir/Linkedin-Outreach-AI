@@ -59,7 +59,7 @@ const PRIYA = person('Priya Nair');
 const SEAN = person("Seán O'Brien");
 const MARIA = person('Maria Rossi');
 
-// What Ark's reader (content_script.js, the same in 3.0.2 and 3.1.0) returns
+// What the old reader (content_script.js, the same in 3.0.2 and 3.1.0) returns
 // for Aoife on LinkedIn's 2026 page, on a fresh visit. There is no <h1>, so
 // the name comes from the tab title, with the notification count, and there
 // is no headline. In Activity it reads the line under her name (her
@@ -530,8 +530,8 @@ function versionsOf(c, channel, variant) {
   return out;
 }
 
-// ── Ark's 3.1.0 Free Mode writer ────────────────────────────────────────────
-// Copied word for word from Ark's background.js at commit 7776170 (3.1.0 as
+// ── 3.1.0's Free Mode writer ────────────────────────────────────────────────
+// Copied word for word from the old background.js at commit 7776170 (3.1.0 as
 // received): normalizeProfile, localMessage and truncate. CI clones only the
 // latest commit, so the test cannot read it from git. It is here only to
 // show the bugs that v4 fixes.
@@ -3476,7 +3476,7 @@ describe('Writer.local: "New version" (variant)', () => {
   });
 });
 
-describe('Ark 3.1.0 bug B15: "Hi (3)," and her headline praised as a post', () => {
+describe('3.1.0 bug B15: "Hi (3)," and her headline praised as a post', () => {
   it('the check finds a cut word: 3.1.0 wrote "…ranking mod…"', () => {
     const text = Ark310.freeMode(AOIFE, 'Networking', 'Neutral', {});
     expect(text).toContain('toolkit for ranking mod…');

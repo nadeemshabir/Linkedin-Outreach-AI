@@ -31,7 +31,7 @@ const KEY_B = 'sk-ant-test-5678-00AA'; // last 8: '678-00AA'
 // Tiny made-up PDFs. A test picks one; Save stores it as base64.
 const PDF_A = { text: '%PDF-1.4\n', base64: 'JVBERi0xLjQK' };
 const PDF_B = { text: '%PDF-1.7\n', base64: 'JVBERi0xLjcK' };
-// A resume saved by Ark's 3.1.0: the file, but no "resumeForAI" (3.1.0 never sent it anywhere).
+// A resume saved by 3.1.0: the file, but no "resumeForAI" (3.1.0 never sent it anywhere).
 const OLD_RESUME = { resumeBase64: PDF_A.base64, resumeFileName: 'my-resume.pdf' };
 
 // What the panel says when Anthropic stops a key.

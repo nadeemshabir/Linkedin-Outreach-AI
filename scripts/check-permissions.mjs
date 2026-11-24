@@ -12,7 +12,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'extension', 'manife
 
 // Permissions Chrome grants without any install warning.
 const NO_WARNING = new Set(['activeTab', 'storage', 'scripting', 'sidePanel', 'alarms']);
-// Host access that Ark's 3.1.0 already has (users accept it there): LinkedIn,
+// Host access that 3.1.0 already has (users accept it there): LinkedIn,
 // and Anthropic's API for AI Mode with the user's own key.
 const HOSTS = new Set(['https://www.linkedin.com/*', 'https://api.anthropic.com/*']);
 // Optional host access shows no install warning: Chrome asks only when the

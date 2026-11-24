@@ -1,6 +1,6 @@
 'use strict';
 
-// inpage.js - "Write with Ark" inside LinkedIn's own boxes.
+// inpage.js - the "✨ Write" button inside LinkedIn's own boxes.
 //
 // What it is for: when you open LinkedIn's "Add a note" box (Connect → Add
 // a note) or a message box on someone's profile, a small "Write a note to
@@ -36,11 +36,11 @@
 // maxlength, or a "0/200" counter, or (if neither is there) your LinkedIn
 // plan in Settings.
 
-if (!globalThis.__arkInpage) {
-  globalThis.__arkInpage = true;
+if (!globalThis.__outreachInpage) {
+  globalThis.__outreachInpage = true;
 
   (() => {
-    const ATTR       = 'data-ark-write';
+    const ATTR       = 'data-outreach-write';
     const NOTE_WORDS = /\b(note|invitation|invite|personali[sz]e)\b/i;
     const INVITE     = /^invite (.+) to connect$/i;
     const FRESH_MS   = 60 * 1000; // a note box opens right after its Connect click
@@ -83,8 +83,8 @@ if (!globalThis.__arkInpage) {
     }
     document.addEventListener('click', onClick, true);
 
-    // ── After Ark is updated ───────────────────────────────────────────────
-    // When Ark is updated while this page stays open, Chrome keeps this old
+    // ── After the extension is updated ─────────────────────────────────────
+    // When the extension is updated while this page stays open, Chrome keeps this old
     // copy running but cuts it off (chrome.runtime.id is gone), and starts
     // the new copy in a fresh world. The old copy then takes its bars away,
     // stops watching, and leaves the page to the new copy. (Before, the two
@@ -160,7 +160,7 @@ if (!globalThis.__arkInpage) {
           const tags = [...new Set([...ui.box.dialog.querySelectorAll('[aria-label]')]
             .map(el => clean(el.getAttribute('aria-label')).match(/^remove\s+(.+?)(?:\s+from\b.*)?$/i))
             .filter(Boolean).map(m => m[1]).filter(n => !/attachment|image|file|gif/i.test(n)))];
-          if (tags.length > 1) return 'This message is to more than one person. Ark writes to one person at a time.';
+          if (tags.length > 1) return 'This message is to more than one person. This button writes to one person at a time.';
           if (tags.length === 1) chatWith = tags[0];
           else {
             // No labelled tag: their name must at least be in the box.
@@ -171,11 +171,11 @@ if (!globalThis.__arkInpage) {
           }
         }
         return chatWith && !samePerson(chatWith, who)
-          ? `This chat is with ${chatWith}. Open their profile to write to them with Ark.`
+          ? `This chat is with ${chatWith}. Open their profile to write to them.`
           : null;
       }
       return ui.inviteFor && !samePerson(ui.inviteFor, who)
-        ? `This invite is for ${ui.inviteFor}. Open their profile to write the note with Ark.`
+        ? `This invite is for ${ui.inviteFor}. Open their profile to write the note.`
         : null;
     }
 
@@ -217,7 +217,7 @@ if (!globalThis.__arkInpage) {
         blocked:   null,
         busy:      false,
         msg:       null, // [text, tone] after the last click
-        before:    null  // what the box held before Ark wrote (for Undo)
+        before:    null  // what the box held before the button wrote (for Undo)
       };
       // Only a real click (or Enter/Space) by you counts. A script in
       // LinkedIn's page could call .click() on these buttons, and in AI Mode
@@ -241,10 +241,10 @@ if (!globalThis.__arkInpage) {
     function render(ui) {
       const name = firstName(ui.who);
       ui.write.disabled    = ui.busy || !!ui.blocked;
-      ui.write.textContent = ui.busy ? 'Writing…' : `✨ ${name ? `Write a ${ui.box.kind} to ${name}` : 'Write with Ark'}`;
+      ui.write.textContent = ui.busy ? 'Writing…' : `✨ Write a ${ui.box.kind}${name ? ` to ${name}` : ''}`;
       ui.write.title       = ui.box.kind === 'note'
-        ? 'Ark writes a note that fits this box. You read it, then press Send.'
-        : 'Ark writes the message into this box. You read it, then press Send.';
+        ? 'Writes a note that fits this box. You read it, then press Send.'
+        : 'Writes the message into this box. You read it, then press Send.';
       const [text, tone] = ui.blocked ? [ui.blocked, 'warn'] : (ui.msg || ['', '']);
       ui.info.textContent = text;
       ui.info.className   = `info ${tone}`.trim();
@@ -267,8 +267,8 @@ if (!globalThis.__arkInpage) {
           payload: { channel: box.kind, maxChars: box.kind === 'note' ? noteLimit(box) : null }
         });
       } catch (_) {
-        // This copy of the script belongs to an older version of Ark.
-        res = { ok: false, error: 'Ark was updated. Reload this page to use it here.' };
+        // This copy of the script belongs to an older version of the extension.
+        res = { ok: false, error: 'The extension was updated. Reload this page to use it here.' };
       }
       ui.busy = false;
 

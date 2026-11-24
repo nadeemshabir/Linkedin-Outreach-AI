@@ -161,7 +161,7 @@ describe('the writer is told where the message goes', () => {
     expect(prompt).toMatch(/under 170 characters/);
     expect(prompt).toMatch(/hard limit is 200\b/);
     expect(prompt).toMatch(/No sign-off/);
-    expect(prompt).not.toMatch(/under 600/); // Ark's 3.1.0 asked for "under 600 characters" every time
+    expect(prompt).not.toMatch(/under 600/); // 3.1.0 asked for "under 600 characters" every time
   });
 
   it('AI Mode on Premium: under 255 characters (hard limit 300)', async () => {

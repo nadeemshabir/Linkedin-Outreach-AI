@@ -1,4 +1,4 @@
-// The background side of "Write with Ark" inside LinkedIn's own boxes
+// The background side of the "✨ Write" button inside LinkedIn's own boxes
 // (INPAGE_WRITE): the real background and a fake browser. Free Mode (no key)
 // is the default. AI Mode tests save a fake Anthropic key, and a fake Claude
 // answers.
@@ -69,7 +69,7 @@ async function noteUsage(w) {
   return (await w.chrome.storage.local.get('noteUsage')).noteUsage;
 }
 
-describe('Write with Ark, inside LinkedIn: Free Mode (no key)', () => {
+describe('The Write button, inside LinkedIn: Free Mode (no key)', () => {
   it('nothing written yet: writes a note that fits the box, and hands it over', async () => {
     const w = world();
     const res = await w.inpage({ channel: 'note', maxChars: 200 });
@@ -190,7 +190,7 @@ describe('Write with Ark, inside LinkedIn: Free Mode (no key)', () => {
   });
 });
 
-describe('Write with Ark, inside LinkedIn: AI Mode (your own key)', () => {
+describe('The Write button, inside LinkedIn: AI Mode (your own key)', () => {
   it('Claude is told the box is a free 200-character note', async () => {
     const w = aiWorld();
     const res = await w.inpage({ channel: 'note', maxChars: 200 });
@@ -283,7 +283,7 @@ describe('Write with Ark, inside LinkedIn: AI Mode (your own key)', () => {
   });
 });
 
-describe('Write with Ark, inside LinkedIn: errors', () => {
+describe('The Write button, inside LinkedIn: errors', () => {
   it('errors come back in plain words', async () => {
     const offPage = world({ url: 'https://www.linkedin.com/feed/' });
     expect(await offPage.inpage({ channel: 'note' })).toEqual({ ok: false, error: 'Open their LinkedIn profile first.' });

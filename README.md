@@ -21,7 +21,7 @@ Free on your device, or with your own Claude, Gemini or GPT key.
 [Screenshots](#-screenshots) ·
 [Install](#-install) ·
 [Free vs AI Mode](#-free-mode-and-ai-mode) ·
-[What changed](#-what-changed-from-arks-310) ·
+[What changed](#-what-changed-from-310) ·
 [How it works](#-how-it-works) ·
 [Privacy](#-privacy-safety-and-permissions) ·
 [Tests](#-run-the-tests)
@@ -162,7 +162,7 @@ It never presses Send. Free Mode sends nothing anywhere. AI Mode sends only what
 
 ## 🆓 Free Mode and AI Mode
 
-Like Ark's 3.1.0, there is no server and no license key. Everything runs inside the extension.
+Like version 3.1.0, there is no server and no license key. Everything runs inside the extension.
 
 | | 🆓 Free Mode | 🤖 AI Mode |
 |---|---|---|
@@ -175,22 +175,22 @@ Both modes get the same facts: the profile, where the message goes (a 200 or 300
 
 📖 **Full details:** [docs/AI-MODE.md](docs/AI-MODE.md): how Free Mode builds a note, what is sent to each AI company, what it costs, and the plain-English errors.
 
-## 📈 What changed from Ark's 3.1.0
+## 📈 What changed from 3.1.0
 
-This is an improved version of Ark's LinkedIn outreach extension, built on Ark's latest version, **3.1.0**. **It is not a rewrite:** same plain JavaScript, no framework, no build step.
+v4 is an improved version of **3.1.0**: same plain JavaScript, no framework, no build step.
 
 > [!NOTE]
-> Commit [`e4af38f`](https://github.com/nadeemshabir/Linkedin-Outreach-AI/commit/e4af38f) is the original v3.0.2 exactly as received, and [`7776170`](https://github.com/nadeemshabir/Linkedin-Outreach-AI/commit/7776170) is Ark's 3.1.0 exactly as received. Every change after them is a tested commit. The move onto 3.1.0 is one commit, [`a9eed56`](https://github.com/nadeemshabir/Linkedin-Outreach-AI/commit/a9eed56), because its code and its tests only work together.
+> Commit [`e4af38f`](https://github.com/nadeemshabir/Linkedin-Outreach-AI/commit/e4af38f) is the original v3.0.2 exactly as received, and [`7776170`](https://github.com/nadeemshabir/Linkedin-Outreach-AI/commit/7776170) is 3.1.0 exactly as received. Every change after them is a tested commit. The move onto 3.1.0 is one commit, [`a9eed56`](https://github.com/nadeemshabir/Linkedin-Outreach-AI/commit/a9eed56), because its code and its tests only work together.
 
 **In one line:** 3.1.0 writes a message in a popup. v4 helps you get a reply. It reads today's LinkedIn correctly, writes straight into LinkedIn's own note box, never loses your work, knows LinkedIn's limits, checks the draft before you send it, and reminds you to follow up.
 
 ### The biggest finding
 
-On LinkedIn's 2026 profile page, Ark's profile reader reads almost nothing, and 3.1.0 did not change it. Run unchanged on a live profile, it returned a name with the notification count stuck on (like "(6) Jane Doe") and an empty profile. Here is what each version writes to the same test person:
+On LinkedIn's 2026 profile page, the old profile reader reads almost nothing, and 3.1.0 did not change it. Run unchanged on a live profile, it returned a name with the notification count stuck on (like "(6) Jane Doe") and an empty profile. Here is what each version writes to the same test person:
 
 <table>
 <tr>
-<th width="50%">❌ Ark's 3.1.0, Free Mode</th>
+<th width="50%">❌ 3.1.0, Free Mode</th>
 <th width="50%">✅ v4, Free Mode</th>
 </tr>
 <tr>
@@ -219,7 +219,7 @@ With your own profile added in Settings, it opens with what you share. Without i
 
 ### Before and after
 
-| | Ark's 3.1.0 (before) | v4 (now) |
+| | 3.1.0 (before) | v4 (now) |
 |---|---|---|
 | **Reading the profile** | On today's LinkedIn: name with "(6)" in front, everything else empty | Every field, checked on live profiles; your scroll position is put back |
 | **Free Mode (no key)** | "Hi (3),", post quotes cut mid-word, no length limit, ignores what you have in common and your goal | The right name, always fits 200 (300 on Premium), never cuts a word, opens with what you share, turns your goal into the ask |
@@ -274,11 +274,11 @@ Two more bugs were found in v4's own new code by its tests (a lock race in the j
 
 ### 📊 Reading LinkedIn: 3.1.0 vs v4
 
-Ark's profile reader is the same in 3.0.2 and 3.1.0. Checked by hand on live LinkedIn (Nov 2026), on a public figure's profile and on the author's own: run unchanged, it got the name wrong and left everything else empty. v4 read every field, including several roles at one company, in 1.5–2.3 seconds.
+The old profile reader is the same in 3.0.2 and 3.1.0. Checked by hand on live LinkedIn (Nov 2026), on a public figure's profile and on the author's own: run unchanged, it got the name wrong and left everything else empty. v4 read every field, including several roles at one company, in 1.5–2.3 seconds.
 
-Measured with `npm run bench`: Ark's reader against v4's, in real Chromium, on 8 made-up profiles built with the live page's structure ([full table](docs/benchmark.md)).
+Measured with `npm run bench`: the old reader against v4's, in real Chromium, on 8 made-up profiles built with the live page's structure ([full table](docs/benchmark.md)).
 
-| Fields read correctly | Ark's reader (3.0.2 = 3.1.0) | v4 |
+| Fields read correctly | Old reader (3.0.2 = 3.1.0) | v4 |
 |---|---:|---:|
 | You open a profile and click right away | 8% | **100%** |
 | You scrolled the whole page yourself first | 36% | **100%** |
@@ -365,7 +365,7 @@ npm test                        # unit tests: the real panel + background, in a 
 npx playwright install chromium
 npm run test:e2e                # the real extension in Chromium, LinkedIn and the AI faked
 npm run check:permissions       # fails if the manifest would show a new install warning
-npm run bench                   # Ark's page reader against v4's, on 8 test profiles
+npm run bench                   # the old page reader against v4's, on 8 test profiles
 npm run screenshots             # screenshots into docs/screenshots/
 ```
 
@@ -398,7 +398,7 @@ Needs Node.js 20 or newer.
 - **The small chat box on a profile, not the full Messaging page.** In a narrow window, LinkedIn opens its full Messaging page instead of the small box. That page keeps the chat in an embedded frame, and the button does not appear there. Copy from the side panel still works.
 - **English LinkedIn only, for the in-page button.** It looks for words like "Messaging", "note", "Invite … to connect". In another language it may not appear; the side panel still works.
 - **The in-page button always uses Quick Mode**, because it should be fast. For Deep Mode, use the side panel. Both share the same draft.
-- **AI Mode needs each student's own API key** (Anthropic, Google or OpenAI), as in 3.1.0. Most students do not have one; a small server holding Ark's key would fix that. Ideas are in [docs/AI-MODE.md](docs/AI-MODE.md#if-ark-brings-a-server-back-later).
+- **AI Mode needs each student's own API key** (Anthropic, Google or OpenAI), as in 3.1.0. Most students do not have one; a small server holding one shared key would fix that. Ideas are in [docs/AI-MODE.md](docs/AI-MODE.md#if-a-server-is-added-later).
 
 ## 📚 Docs
 
@@ -410,5 +410,5 @@ Needs Node.js 20 or newer.
 <br>
 
 <div align="center">
-<sub>Built on Ark's LinkedIn outreach extension 3.1.0 · plain JavaScript, no build step · you always press Send</sub>
+<sub>LinkedIn Outreach AI v4 · plain JavaScript, no build step · you always press Send</sub>
 </div>

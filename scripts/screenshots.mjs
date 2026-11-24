@@ -1,5 +1,5 @@
 // Takes screenshots of the real extension in Chromium: Chrome's real side
-// panel (at side-panel size) and the "Write with Ark" button inside
+// panel (at side-panel size) and the "✨ Write" button inside
 // LinkedIn's note box. It needs no account and no key: LinkedIn is a local
 // test page that copies the structure of LinkedIn's 2026 profile page, with
 // a made-up person (test/fixtures/), and every other site is blocked.
@@ -158,7 +158,7 @@ await panel.click('#tabbtn-settings');
 await panel.waitFor(() => document.querySelector('#tab-settings').checkVisibility());
 await tallShot('panel-8-settings.png', 1300);
 
-// "Write with Ark" inside LinkedIn's own note box: Connect → Add a note →
+// The "✨ Write" button inside LinkedIn's own note box: Connect → Add a note →
 // the button → the note. It reuses the panel's Free Mode draft.
 await linkedin.bringToFront();
 await linkedin.setViewportSize({ width: 1000, height: 640 });
